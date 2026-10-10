@@ -12,7 +12,7 @@ been hardened for direct exposure to the public internet.
 ## Features
 
 - Automatic and manual IPv4 ARP scans across one or more host interfaces.
-- Persistent inventory with online/offline status, IP, MAC, and vendor.
+- Persistent inventory with online/offline status, IP, MAC, vendor, and a Last seen timestamp in your local timezone.
 - Known status, custom names, and descriptions that survive IP changes.
 - Search, Known/status filters, sorting, and filtered CSV export.
 - Scan history with the latest 100 runs and explicit error details.
