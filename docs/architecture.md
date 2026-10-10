@@ -18,7 +18,6 @@ Manual trigger or scheduler → bounded `arp-scan` subprocess per interface → 
 - No shell execution: scanner arguments are passed as a list and interface names are validated. API clients cannot submit arbitrary scan commands.
 - Fixed static-file allowlist, escaped user/device data, and a same-origin Content Security Policy.
 - HTTP Basic authentication is mandatory in live Compose. JSON Content-Type and Origin validation protect write requests against CSRF.
-- Demo and live databases are separate. Demo data is visibly labeled and uses synthetic MAC addresses.
 - The UI uses Simple SMTP Test's warm neutral/orange palette and charcoal dark palette. Light / Dark / System preferences are stored locally; a synchronous local theme script prevents an initial theme flash and follows system changes.
 
 The scope is deliberately focused: discover, list, and identify devices. Unknown means unassigned; it is not an automatic threat assessment.

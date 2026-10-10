@@ -33,25 +33,11 @@ docker compose logs -f
 
 Open `http://SERVER-IP:8840`. Sign in with `admin` (or your configured user) and your password. The first scan starts automatically, then repeats every 120 seconds by default. `.env` and database files are excluded from Git.
 
-The live setup uses **Linux host networking**, with no `ports:` mapping; `PORT` controls the port on the host. Docker Desktop on macOS/Windows does not provide equivalent ARP access to the physical LAN. Use demo mode there to explore the UI.
+The live setup uses **Linux host networking**, with no `ports:` mapping; `PORT` controls the port on the host. Docker Desktop on macOS/Windows does not provide equivalent ARP access to the physical LAN.
 
 The image runs as root with only `NET_RAW` and `NET_ADMIN` capabilities for `arp-scan`. It does not use `privileged: true`. The root filesystem is read-only; `/data` and `/tmp` are writable. The scanner and its vendor database come from Debian packages.
 
 HTTP Basic authentication over plain HTTP does not encrypt credentials. Use an HTTPS reverse proxy or VPN for access outside your trusted LAN and restrict direct access to the host port. A reverse proxy must preserve the original `Host` header. Set `HOST=127.0.0.1` for a proxy on the same host when appropriate.
-
-## Demo without LAN access
-
-```sh
-docker compose -f docker-compose.demo.yml up -d --build
-```
-
-Open `http://localhost:8841`. Sample data is clearly labeled, uses synthetic MAC addresses, and has a separate volume. Editing, filters, and persistence work. Demo scans simulate a run and send no ARP packets.
-
-Without Docker, use Python 3.9+; no pip dependencies:
-
-```sh
-DEMO=true PORT=8841 python3 app.py
-```
 
 ## Configuration
 
@@ -65,7 +51,6 @@ DEMO=true PORT=8841 python3 app.py
 | `DB_PATH` | `data/lan.sqlite3` natively, `/data/lan.sqlite3` in Docker | SQLite path |
 | `AUTH_USER` | `admin` | HTTP Basic username |
 | `AUTH_PASSWORD` | empty natively, required in live Compose | HTTP Basic password |
-| `DEMO` | `false` | Sample data and simulated scans |
 | `TZ` | `Europe/Berlin` in Compose | Container log timezone |
 
 Database/API timestamps use UTC. The English UI formats timestamps in your browser's local timezone. Container configuration changes take effect after `docker compose up -d`.
@@ -95,7 +80,7 @@ Online means a device responded during the last successful scan. No response mea
 python3 -m unittest discover -s tests -v
 ```
 
-Tests cover parsing, IP changes, persistent metadata, failures/timeouts, concurrent scan requests, API validation, authentication, and CSRF protection. GitHub Actions also builds the Docker image, starts a demo container, and validates both Compose files.
+Tests cover parsing, IP changes, persistent metadata, failures/timeouts, concurrent scan requests, API validation, authentication, and CSRF protection. GitHub Actions also builds the Docker image, starts the application container, and validates the Compose configuration.
 
 API: `GET /api/state`, `POST /api/scan` with `{}`, `PATCH /api/devices/<id>` with `known`, `name`, and/or `description`. Writes require `Content-Type: application/json`. `GET /healthz` checks the HTTP service; inspect scan history for scanner health.
 

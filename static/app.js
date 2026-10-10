@@ -50,17 +50,16 @@ function render(){
   const d=state.devices,known=d.filter(d=>d.known).length,online=d.filter(d=>d.online).length,unknown=d.length-known;
   for(const [id,val] of Object.entries({'stat-total':d.length,'stat-online':online,'stat-known':known,'stat-unknown':unknown,'nav-count':d.length,'inventory-count':d.length,'tab-total':d.length,'tab-known':known,'tab-unknown':unknown}))$(id).textContent=val;
   $('unknown-note').textContent=unknown ? 'Time to get to know them' : 'All devices are identified';
-  $('demo-banner').hidden=!state.config.demo;
-  $('mode').textContent=state.config.demo?'DEMO':'LIVE · LOCAL';
+  $('mode').textContent='LIVE';
   const successful=state.scans.find(s=>s.status==='success'),latest=state.scans[0];
   $('last-scan').textContent=successful?`Last scan: ${date(successful.finished_at)}`:'No successful scans yet';
   if(latest?.status==='error'){$('connection-error').hidden=false;$('connection-error').textContent='Scan failed: '+latest.error;}
   else $('connection-error').hidden=true;
-  for(const id of ['scan-button','history-scan']){const b=$(id);b.disabled=state.scanning||scanRequested;b.classList.toggle('scanning',state.scanning);b.innerHTML=icon('scan')+`<span>${state.scanning?'Scanning …':state.config.demo?'Run demo scan':'Scan network'}</span>`;}
+  for(const id of ['scan-button','history-scan']){const b=$(id);b.disabled=state.scanning||scanRequested;b.classList.toggle('scanning',state.scanning);b.innerHTML=icon('scan')+`<span>${state.scanning?'Scanning …':'Scan network'}</span>`;}
   renderDevices();
   $('scans-body').innerHTML=state.scans.map(s=>`<tr><td>${date(s.started_at)}</td><td><span class="status ${s.status==='error'?'error':s.status==='running'?'offline':''}">${s.status==='success'?'Successful':s.status==='error'?'Failed':'Running …'}</span></td><td>${s.status==='success'?s.found:'–'}</td><td>${escapeHtml(s.error|| (s.finished_at?'Completed: '+date(s.finished_at):'Scan in progress'))}</td></tr>`).join('');
   $('no-scans').hidden=state.scans.length>0;
-  $('config-details').innerHTML=`<dt>Mode</dt><dd>${state.config.demo?'Demo with sample devices':'Live · ARP scan'}</dd><dt>Interfaces</dt><dd>${escapeHtml(state.config.interfaces.join(', ')||'Not configured')}</dd><dt>Scan interval</dt><dd>${state.config.interval} seconds</dd><dt>Storage</dt><dd>SQLite · Persistent data volume</dd><dt>Next scan</dt><dd>${state.scanning?'Scanning':state.next_scan?date(state.next_scan*1000):'–'}</dd>`;
+  $('config-details').innerHTML=`<dt>Mode</dt><dd>${'ARP scan'}</dd><dt>Interfaces</dt><dd>${escapeHtml(state.config.interfaces.join(', ')||'Not configured')}</dd><dt>Scan interval</dt><dd>${state.config.interval} seconds</dd><dt>Storage</dt><dd>SQLite · Persistent data volume</dd><dt>Next scan</dt><dd>${state.scanning?'Scanning':state.next_scan?date(state.next_scan*1000):'–'}</dd>`;
 }
 async function refresh(){
   if(requesting)return;requesting=true;
@@ -69,7 +68,7 @@ async function refresh(){
 }
 async function scan(){
   scanRequested=true;render();
-  try{await api('/api/scan','POST',{});toast(state.config.demo?'Demo scan started.':'Network scan started.');}catch(e){toast(e.message);}
+  try{await api('/api/scan','POST',{});toast('Network scan started.');}catch(e){toast(e.message);}
   finally{scanRequested=false;await refresh();}
 }
 function openDevice(id){

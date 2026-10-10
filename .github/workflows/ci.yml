@@ -16,15 +16,15 @@ jobs:
       - run: docker build -t lanytic:test .
       - name: Container smoke test
         run: |
-          docker run -d --name lanytic-smoke --cap-drop ALL --read-only --tmpfs /tmp --tmpfs /data -e DEMO=true -e DB_PATH=/data/demo.sqlite3 -p 127.0.0.1:8841:8840 lanytic:test
+          docker run -d --name lanytic-smoke --cap-drop ALL --read-only --tmpfs /tmp --tmpfs /data -e DB_PATH=/data/lan.sqlite3 -p 127.0.0.1:8841:8840 lanytic:test
           python - <<'PY'
           import json, time, urllib.request
           for attempt in range(30):
               try:
                   with urllib.request.urlopen('http://127.0.0.1:8841/api/state') as r:
                       state = json.load(r)
-                  assert state['config']['demo'] is True
-                  assert len(state['devices']) == 10
+                  assert state['devices'] == []
+                  assert state['config']['interfaces'] == []
                   break
               except OSError:
                   time.sleep(1)
@@ -38,7 +38,6 @@ jobs:
           AUTH_PASSWORD: ci-only-test-password
         run: |
           docker compose config --quiet
-          docker compose -f docker-compose.demo.yml config --quiet
       - name: Container logs
         if: always()
         run: docker logs lanytic-smoke || true

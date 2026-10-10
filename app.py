@@ -25,7 +25,6 @@ def now():
 
 class Config:
     def __init__(self):
-        self.demo = os.getenv('DEMO', 'false').lower() == 'true'
         self.host = os.getenv('HOST', '127.0.0.1')
         self.port = int(os.getenv('PORT', '8840'))
         self.interfaces = list(dict.fromkeys(os.getenv('IFACES', '').split()))
@@ -35,7 +34,7 @@ class Config:
         self.timeout = int(os.getenv('SCAN_TIMEOUT', '60'))
         if self.interval < 10 or not 1 <= self.timeout <= 600:
             raise ValueError('SCAN_INTERVAL must be >= 10 and SCAN_TIMEOUT between 1 and 600.')
-        self.db = os.getenv('DB_PATH', str(ROOT / 'data' / ('demo.sqlite3' if self.demo else 'lan.sqlite3')))
+        self.db = os.getenv('DB_PATH', str(ROOT / 'data' / 'lan.sqlite3'))
         self.username = os.getenv('AUTH_USER', 'admin')
         self.password = os.getenv('AUTH_PASSWORD', '')
 
@@ -126,28 +125,6 @@ class Store:
         with self.connect() as db:
             return [dict(r) for r in db.execute('SELECT * FROM scans ORDER BY id DESC LIMIT 100')]
 
-    def seed_demo(self):
-        if self.devices():
-            return
-        entries = [
-            ('1', '02:00:00:00:00:01', 'AVM', 'FRITZ!Box 7590', 'Router · Hallway', True, True),
-            ('12', '02:00:00:00:00:02', 'Ubiquiti Networks', 'Access Point', 'Wi-Fi · Living room', True, True),
-            ('24', '02:00:00:00:00:03', 'Synology', 'DiskStation', 'NAS · Backups & media', True, True),
-            ('32', '02:00:00:00:00:04', 'Apple', 'MacBook Pro', 'Work laptop', True, True),
-            ('45', '02:00:00:00:00:05', 'Raspberry Pi', 'Home Assistant', 'Smart home · Server cabinet', True, True),
-            ('56', '02:00:00:00:00:06', 'Espressif', '', '', False, True),
-            ('67', '02:00:00:00:00:07', 'Apple', 'iPhone', 'Personal', True, True),
-            ('81', '02:00:00:00:00:08', 'Unknown', '', '', False, True),
-            ('92', '02:00:00:00:00:09', 'Sonos', 'Sonos One', 'Speaker · Kitchen', True, False),
-            ('108', '02:00:00:00:00:0a', 'Samsung', 'TV', 'Living room', True, False),
-        ]
-        stamp = now()
-        with self.connect() as db:
-            for ip, mac, vendor, name, desc, known, online in entries:
-                db.execute('''INSERT INTO devices (mac,interface,ip,vendor,name,description,known,online,first_seen,last_seen)
-                    VALUES (?,?,?,?,?,?,?,?,?,?)''', (mac, 'demo0', '192.168.178.'+ip, vendor, name, desc, known, online, stamp, stamp))
-            db.execute("INSERT INTO scans (started_at,finished_at,status,found) VALUES (?,?,'success',8)", (stamp, stamp))
-
 class Scanner:
     def __init__(self, config, store):
         self.config, self.store = config, store
@@ -172,21 +149,16 @@ class Scanner:
         try:
             with self.store.connect() as db:
                 scan_id = db.execute("INSERT INTO scans (started_at,status) VALUES (?,'running')", (now(),)).lastrowid
-            if self.config.demo:
-                self.stop.wait(1)
-                observations = [{k: d[k] for k in ('mac','interface','ip','vendor')} for d in self.store.devices() if d['online']]
-                interfaces = ['demo0']
-            else:
-                interfaces = self.config.interfaces
-                if not interfaces:
-                    raise RuntimeError('No interface configured. Set IFACES, e.g. eth0 or enp3s0.')
-                observations = []
-                for interface in interfaces:
-                    result = subprocess.run(['arp-scan', '--localnet', '--interface='+interface, '--retry=2', '--plain', '--ignoredups'],
-                                            capture_output=True, text=True, timeout=self.config.timeout, check=False)
-                    if result.returncode:
-                        raise RuntimeError('Scan on %s failed: %s' % (interface, result.stderr.strip()[:500]))
-                    observations.extend(parse_arp(result.stdout, interface))
+            interfaces = self.config.interfaces
+            if not interfaces:
+                raise RuntimeError('No interface configured. Set IFACES, e.g. eth0 or enp3s0.')
+            observations = []
+            for interface in interfaces:
+                result = subprocess.run(['arp-scan', '--localnet', '--interface='+interface, '--retry=2', '--plain', '--ignoredups'],
+                                        capture_output=True, text=True, timeout=self.config.timeout, check=False)
+                if result.returncode:
+                    raise RuntimeError('Scan on %s failed: %s' % (interface, result.stderr.strip()[:500]))
+                observations.extend(parse_arp(result.stdout, interface))
             self.store.apply_scan(observations, interfaces, scan_id)
         except Exception as exc:
             message = str(exc)
@@ -202,7 +174,7 @@ class Scanner:
             self.lock.release()
 
     def schedule(self):
-        self.next_scan = time.time() + self.config.interval if self.config.demo else time.time()
+        self.next_scan = time.time()
         def loop():
             while not self.stop.wait(1):
                 if not self.lock.locked() and time.time() >= self.next_scan:
@@ -258,7 +230,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/state':
             scanner = self.server.scanner
             self.respond(200, {'devices':self.server.store.devices(), 'scans':self.server.store.scan_history(),
-                'config':{'demo':self.server.config.demo,'interfaces':['demo0'] if self.server.config.demo else self.server.config.interfaces,
+                'config':{'interfaces':self.server.config.interfaces,
                           'interval':self.server.config.interval},
                 'scanning':scanner.lock.locked(), 'next_scan':scanner.next_scan})
         elif path in ('/', '/app.js', '/style.css', '/favicon.svg', '/theme.js'):
@@ -308,8 +280,6 @@ def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     config = Config()
     store = Store(config.db)
-    if config.demo:
-        store.seed_demo()
     scanner = Scanner(config, store)
     server = AppServer((config.host,config.port),config,store,scanner)
     scanner.schedule()
@@ -318,7 +288,7 @@ def main():
         threading.Thread(target=server.shutdown,daemon=True).start()
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
-    logging.info('LANytic running at http://%s:%s (%s)', config.host, config.port, 'DEMO' if config.demo else 'LIVE')
+    logging.info('LANytic running at http://%s:%s', config.host, config.port)
     try:
         server.serve_forever()
     finally:

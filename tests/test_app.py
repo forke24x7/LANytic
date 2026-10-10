@@ -18,7 +18,7 @@ class StoreTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.store = Store(str(Path(self.temp.name) / 'lan.sqlite3'))
-        with patch.dict(os.environ, {'IFACES':'eth0','DEMO':'false'}, clear=True):
+        with patch.dict(os.environ, {'IFACES':'eth0'}, clear=True):
             self.config = Config()
         self.scanner = Scanner(self.config, self.store)
 
@@ -107,8 +107,11 @@ class StoreTests(unittest.TestCase):
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
-        with patch.dict(os.environ,{'DEMO':'true','AUTH_PASSWORD':'test-only-password'},clear=True):self.config=Config()
-        self.store=Store(str(Path(self.temp.name)/'demo.sqlite3'));self.store.seed_demo()
+        with patch.dict(os.environ,{'IFACES':'eth0','AUTH_PASSWORD':'test-only-password'},clear=True):self.config=Config()
+        self.store=Store(str(Path(self.temp.name)/'test.sqlite3'))
+        with self.store.connect() as db:
+            scan_id=db.execute("INSERT INTO scans (started_at,status) VALUES ('2026-01-01','running')").lastrowid
+        self.store.apply_scan(parse_arp(ARP,'eth0'),['eth0'],scan_id)
         self.scanner=Scanner(self.config,self.store)
         self.server=AppServer(('127.0.0.1',0),self.config,self.store,self.scanner)
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
@@ -148,12 +151,21 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request('/api/devices/999','PATCH',{'known':True})[0],404)
         self.assertEqual(self.request('/api/devices/1','PATCH',[])[0],400)
 
-    def test_manual_scan_and_seed_is_idempotent(self):
-        self.store.seed_demo();self.assertEqual(len(self.store.devices()),10)
-        self.assertEqual(self.request('/api/scan','POST',{})[0],202)
-        self.assertEqual(self.request('/api/scan','POST',{})[0],409)
-        self.scanner.thread.join(3)
+    def test_manual_scan(self):
+        started, release = threading.Event(), threading.Event()
+        def scan_result(*args, **kwargs):
+            started.set()
+            release.wait(3)
+            return subprocess.CompletedProcess([],0,ARP,'')
+        with patch('app.subprocess.run',side_effect=scan_result):
+            self.assertEqual(self.request('/api/scan','POST',{})[0],202)
+            started.wait(1)
+            try:
+                self.assertEqual(self.request('/api/scan','POST',{})[0],409)
+            finally:
+                release.set()
+                self.scanner.thread.join(3)
         self.assertEqual(self.store.scan_history()[0]['status'],'success')
-        self.assertEqual(self.store.scan_history()[0]['found'],8)
+        self.assertEqual(self.store.scan_history()[0]['found'],1)
 
 if __name__=='__main__':unittest.main()
