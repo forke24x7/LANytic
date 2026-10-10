@@ -2,6 +2,13 @@
 
 A clean, self-hosted view of your LAN. Discover devices with ARP, mark them as **Known**, and add your own names and descriptions.
 
+## About this project
+
+This tool is AI-generated. I work in IT infrastructure and created it to make
+keeping track of devices on my local network easier. It is intended to run on a
+trusted LAN or behind a reverse proxy with an authentication layer. It has not
+been hardened for direct exposure to the public internet.
+
 ## Features
 
 - Automatic and manual IPv4 ARP scans across one or more host interfaces.
