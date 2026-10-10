@@ -1,23 +1,24 @@
-# Technischer Hintergrund
+# Technical background
 
-WatchYourLAN ist eine Go-Anwendung. Sein [Scanner](https://github.com/aceberg/WatchYourLAN/blob/main/backend/internal/arp/arpscan.go) ruft `arp-scan` pro Interface auf und liest IP-Adresse, MAC-Adresse und Hersteller aus der Ausgabe. Laut [README](https://github.com/aceberg/WatchYourLAN#readme) werden Geräte und Historie in SQLite oder PostgreSQL gespeichert. Das [Dockerfile](https://github.com/aceberg/WatchYourLAN/blob/main/Dockerfile) installiert `arp-scan` und `tzdata`; der Docker-Start verwendet Host-Networking.
+WatchYourLAN is written in Go. Its [scanner](https://github.com/aceberg/WatchYourLAN/blob/main/backend/internal/arp/arpscan.go) invokes `arp-scan` per interface and parses IP, MAC, and vendor from its output. The [README](https://github.com/aceberg/WatchYourLAN#readme) documents SQLite/PostgreSQL storage and host networking. Its [Dockerfile](https://github.com/aceberg/WatchYourLAN/blob/main/Dockerfile) installs `arp-scan` and `tzdata`.
 
-LANytic verwendet dasselbe etablierte Systemwerkzeug zur Erkennung, wurde aber vollständig neu implementiert. Es wurde kein Quellcode, UI, Asset oder Datenbankschema aus WatchYourLAN übernommen.
+LANytic uses the same established scanner utility, with an independent application implementation. No WatchYourLAN application source, UI, assets, or database schema was copied.
 
-## LANytic
+## LANytic architecture
 
-Browser → Python HTTP-API → SQLite
+Browser → Python HTTP API → SQLite
 
-Manueller Scan oder Scheduler → begrenzter `arp-scan`-Subprozess je Interface → validierte Beobachtungen → eine SQLite-Transaktion
+Manual trigger or scheduler → bounded `arp-scan` subprocess per interface → validated observations → one SQLite transaction
 
-- Python-Standardbibliothek: kein pip, npm oder Build-Schritt erforderlich.
-- SQLite/WAL: jeder Request benutzt eine eigene Verbindung. Namen und Beschreibungen werden bei Scan-Upserts nicht überschrieben.
-- Scan-Mutex: höchstens ein Durchlauf zur gleichen Zeit; der nächste automatische Scan beginnt nach dem konfigurierten Intervall.
-- Ein Durchlauf gilt nur dann als erfolgreich, wenn alle konfigurierten Interfaces erfolgreich gescannt wurden. Fehler setzen keine Geräte offline.
-- MAC und Interface bilden eine stabile Identität. IP ist eine veränderliche Beobachtung.
-- Parameter werden als Argumentliste ohne Shell ausgeführt; Interface-Namen sind validiert. Die API erlaubt keine freien Scan-Kommandos.
-- Statische Dateien werden über eine feste Allowlist ausgeliefert. Die Oberfläche maskiert Geräteangaben vor der HTML-Ausgabe, CSP beschränkt Inhalte auf lokale Assets.
-- HTTP-Basic-Auth ist in der Live-Compose-Konfiguration verpflichtend; JSON-Content-Type und Origin-Prüfung schützen Schreibanfragen gegen CSRF.
-- Demo- und Live-Daten sind getrennt. Demo-MACs sind synthetisch und die UI zeigt den Modus sichtbar an.
+- Python standard library: no pip, npm, or build step.
+- SQLite/WAL: each request uses its own connection. Scan upserts never overwrite custom metadata.
+- Scan mutex: at most one scan at a time. Scheduling restarts the interval after a run completes.
+- Atomic results: all configured interfaces must succeed; failure leaves device states intact.
+- Stable identity: MAC + interface; IP is a changing observation.
+- No shell execution: scanner arguments are passed as a list and interface names are validated. API clients cannot submit arbitrary scan commands.
+- Fixed static-file allowlist, escaped user/device data, and a same-origin Content Security Policy.
+- HTTP Basic authentication is mandatory in live Compose. JSON Content-Type and Origin validation protect write requests against CSRF.
+- Demo and live databases are separate. Demo data is visibly labeled and uses synthetic MAC addresses.
+- The UI uses Simple SMTP Test's warm neutral/orange palette and charcoal dark palette. Light / Dark / System preferences are stored locally; a synchronous local theme script prevents an initial theme flash and follows system changes.
 
-Bewusst enger Funktionsumfang: Geräte entdecken, auflisten und zuordnen. Ein Unknown-Gerät ist eine nicht zugeordnete Beobachtung und keine automatische Bedrohungsbewertung.
+The scope is deliberately focused: discover, list, and identify devices. Unknown means unassigned; it is not an automatic threat assessment.

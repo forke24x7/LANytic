@@ -135,6 +135,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request('/')[0],200)
         self.assertEqual(self.request('/../app.py')[0],404)
         self.assertEqual(self.request('/app.js')[0],200)
+        self.assertEqual(self.request('/theme.js')[0],200)
         self.assertIn("script-src 'self'",self.request('/')[2]['Content-Security-Policy'])
 
     def test_patch_persists_and_requires_json_same_origin(self):

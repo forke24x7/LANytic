@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import re
 import signal
-import socket
 import sqlite3
 import subprocess
 import threading
@@ -31,11 +30,11 @@ class Config:
         self.port = int(os.getenv('PORT', '8840'))
         self.interfaces = list(dict.fromkeys(os.getenv('IFACES', '').split()))
         if any(not re.fullmatch(r'[a-zA-Z0-9_.:-]{1,32}', i) for i in self.interfaces):
-            raise ValueError('IFACES enthält einen ungültigen Interfacenamen.')
+            raise ValueError('IFACES contains an invalid interface name.')
         self.interval = int(os.getenv('SCAN_INTERVAL', '120'))
         self.timeout = int(os.getenv('SCAN_TIMEOUT', '60'))
         if self.interval < 10 or not 1 <= self.timeout <= 600:
-            raise ValueError('SCAN_INTERVAL muss >= 10, SCAN_TIMEOUT zwischen 1 und 600 sein.')
+            raise ValueError('SCAN_INTERVAL must be >= 10 and SCAN_TIMEOUT between 1 and 600.')
         self.db = os.getenv('DB_PATH', str(ROOT / 'data' / ('demo.sqlite3' if self.demo else 'lan.sqlite3')))
         self.username = os.getenv('AUTH_USER', 'admin')
         self.password = os.getenv('AUTH_PASSWORD', '')
@@ -75,7 +74,7 @@ class Store:
                     id INTEGER PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT,
                     status TEXT NOT NULL, found INTEGER NOT NULL DEFAULT 0, error TEXT);
             ''')
-            db.execute("UPDATE scans SET status='error', error='Scan durch Neustart unterbrochen.', finished_at=? WHERE status='running'", (now(),))
+            db.execute("UPDATE scans SET status='error', error='Scan interrupted by a restart.', finished_at=? WHERE status='running'", (now(),))
 
     @contextmanager
     def connect(self):
@@ -110,18 +109,18 @@ class Store:
     def update(self, device_id, changes):
         allowed = {'known', 'name', 'description'}
         if not changes or not isinstance(changes, dict) or set(changes) - allowed:
-            raise ValueError('Erlaubte Felder: known, name, description.')
+            raise ValueError('Allowed fields: known, name, description.')
         for key, value in changes.items():
             if key == 'known':
                 if type(value) is not bool:
-                    raise ValueError('known muss true oder false sein.')
+                    raise ValueError('known must be true or false.')
             elif not isinstance(value, str) or len(value) > (100 if key == 'name' else 2000):
-                raise ValueError('Name maximal 100, Beschreibung maximal 2000 Zeichen.')
+                raise ValueError('Name: maximum 100 characters. Description: maximum 2000 characters.')
         with self.connect() as db:
             cursor = db.execute('UPDATE devices SET ' + ','.join(k + '=?' for k in changes) + ' WHERE id=?',
                                 list(changes.values()) + [device_id])
             if not cursor.rowcount:
-                raise KeyError('Gerät nicht gefunden.')
+                raise KeyError('Device not found.')
 
     def scan_history(self):
         with self.connect() as db:
@@ -131,16 +130,16 @@ class Store:
         if self.devices():
             return
         entries = [
-            ('1', '02:00:00:00:00:01', 'AVM', 'FRITZ!Box 7590', 'Router · Flur', True, True),
-            ('12', '02:00:00:00:00:02', 'Ubiquiti Networks', 'Access Point', 'WLAN · Wohnzimmer', True, True),
-            ('24', '02:00:00:00:00:03', 'Synology', 'DiskStation', 'NAS · Backups & Medien', True, True),
-            ('32', '02:00:00:00:00:04', 'Apple', 'MacBook Pro', 'Arbeitsgerät', True, True),
-            ('45', '02:00:00:00:00:05', 'Raspberry Pi', 'Home Assistant', 'Smart Home · Technikschrank', True, True),
+            ('1', '02:00:00:00:00:01', 'AVM', 'FRITZ!Box 7590', 'Router · Hallway', True, True),
+            ('12', '02:00:00:00:00:02', 'Ubiquiti Networks', 'Access Point', 'Wi-Fi · Living room', True, True),
+            ('24', '02:00:00:00:00:03', 'Synology', 'DiskStation', 'NAS · Backups & media', True, True),
+            ('32', '02:00:00:00:00:04', 'Apple', 'MacBook Pro', 'Work laptop', True, True),
+            ('45', '02:00:00:00:00:05', 'Raspberry Pi', 'Home Assistant', 'Smart home · Server cabinet', True, True),
             ('56', '02:00:00:00:00:06', 'Espressif', '', '', False, True),
-            ('67', '02:00:00:00:00:07', 'Apple', 'iPhone', 'Privat', True, True),
+            ('67', '02:00:00:00:00:07', 'Apple', 'iPhone', 'Personal', True, True),
             ('81', '02:00:00:00:00:08', 'Unknown', '', '', False, True),
-            ('92', '02:00:00:00:00:09', 'Sonos', 'Sonos One', 'Lautsprecher · Küche', True, False),
-            ('108', '02:00:00:00:00:0a', 'Samsung', 'Fernseher', 'Wohnzimmer', True, False),
+            ('92', '02:00:00:00:00:09', 'Sonos', 'Sonos One', 'Speaker · Kitchen', True, False),
+            ('108', '02:00:00:00:00:0a', 'Samsung', 'TV', 'Living room', True, False),
         ]
         stamp = now()
         with self.connect() as db:
@@ -180,20 +179,20 @@ class Scanner:
             else:
                 interfaces = self.config.interfaces
                 if not interfaces:
-                    raise RuntimeError('Kein Interface konfiguriert. Setze IFACES, z. B. eth0 oder enp3s0.')
+                    raise RuntimeError('No interface configured. Set IFACES, e.g. eth0 or enp3s0.')
                 observations = []
                 for interface in interfaces:
                     result = subprocess.run(['arp-scan', '--localnet', '--interface='+interface, '--retry=2', '--plain', '--ignoredups'],
                                             capture_output=True, text=True, timeout=self.config.timeout, check=False)
                     if result.returncode:
-                        raise RuntimeError('Scan auf %s fehlgeschlagen: %s' % (interface, result.stderr.strip()[:500]))
+                        raise RuntimeError('Scan on %s failed: %s' % (interface, result.stderr.strip()[:500]))
                     observations.extend(parse_arp(result.stdout, interface))
             self.store.apply_scan(observations, interfaces, scan_id)
         except Exception as exc:
             message = str(exc)
             if isinstance(exc, FileNotFoundError):
-                message = 'arp-scan fehlt. Verwende das Docker-Image oder installiere arp-scan auf dem Host.'
-            logging.error('Scan fehlgeschlagen: %s', message)
+                message = 'arp-scan is missing. Use the Docker image or install arp-scan on the host.'
+            logging.error('Scan failed: %s', message)
             if scan_id is not None:
                 with self.store.connect() as db:
                     db.execute("UPDATE scans SET status='error',finished_at=?,error=? WHERE id=?", (now(), message, scan_id))
@@ -246,7 +245,7 @@ class Handler(BaseHTTPRequestHandler):
         expected = 'Basic ' + base64.b64encode((config.username+':'+config.password).encode()).decode()
         if hmac.compare_digest(self.headers.get('Authorization','').encode(), expected.encode()):
             return True
-        self.respond(401, {'error':'Anmeldung erforderlich.'}, extra={'WWW-Authenticate':'Basic realm="LANytic", charset="UTF-8"'})
+        self.respond(401, {'error':'Authentication required.'}, extra={'WWW-Authenticate':'Basic realm="LANytic", charset="UTF-8"'})
         return False
 
     def do_GET(self):
@@ -262,45 +261,45 @@ class Handler(BaseHTTPRequestHandler):
                 'config':{'demo':self.server.config.demo,'interfaces':['demo0'] if self.server.config.demo else self.server.config.interfaces,
                           'interval':self.server.config.interval},
                 'scanning':scanner.lock.locked(), 'next_scan':scanner.next_scan})
-        elif path in ('/', '/app.js', '/style.css', '/favicon.svg'):
+        elif path in ('/', '/app.js', '/style.css', '/favicon.svg', '/theme.js'):
             file = ROOT / 'static' / ('index.html' if path == '/' else path[1:])
-            mime = {'/':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/favicon.svg':'image/svg+xml'}[path]
+            mime = {'/':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/favicon.svg':'image/svg+xml','/theme.js':'text/javascript; charset=utf-8'}[path]
             self.respond(200, file.read_bytes(), mime)
         else:
-            self.respond(404, {'error':'Nicht gefunden.'})
+            self.respond(404, {'error':'Not found.'})
 
     def mutate(self):
         if not self.authorized():
             return
         origin = self.headers.get('Origin')
         if (origin and urlsplit(origin).netloc != self.headers.get('Host')) or self.headers.get('Sec-Fetch-Site') == 'cross-site':
-            self.respond(403, {'error':'Anfrage von fremder Website abgelehnt.'})
+            self.respond(403, {'error':'Cross-site request rejected.'})
             return
         if self.headers.get('Content-Type','').split(';')[0] != 'application/json':
-            self.respond(415, {'error':'Content-Type application/json erforderlich.'})
+            self.respond(415, {'error':'Content-Type application/json is required.'})
             return
         try:
             size = int(self.headers.get('Content-Length','0'))
             if not 0 < size <= 16384:
-                raise ValueError('Ungültige Anfragegröße.')
+                raise ValueError('Invalid request size.')
             changes = json.loads(self.rfile.read(size))
             if not isinstance(changes, dict):
-                raise ValueError('JSON-Objekt erforderlich.')
+                raise ValueError('A JSON object is required.')
             path = urlsplit(self.path).path
             if self.command == 'POST' and path == '/api/scan':
                 if self.server.scanner.trigger():
                     self.respond(202, {'status':'started'})
                 else:
-                    self.respond(409, {'error':'Ein Scan läuft bereits.'})
+                    self.respond(409, {'error':'A scan is already running.'})
             elif self.command == 'PATCH' and re.fullmatch(r'/api/devices/[0-9]+',path):
                 self.server.store.update(int(path.rsplit('/',1)[1]), changes)
                 self.respond(200, {'status':'saved'})
             else:
-                self.respond(404, {'error':'Nicht gefunden.'})
+                self.respond(404, {'error':'Not found.'})
         except (ValueError, UnicodeDecodeError) as exc:
             self.respond(400, {'error':str(exc)})
         except KeyError:
-            self.respond(404, {'error':'Gerät nicht gefunden.'})
+            self.respond(404, {'error':'Device not found.'})
 
     do_POST = mutate
     do_PATCH = mutate
@@ -319,7 +318,7 @@ def main():
         threading.Thread(target=server.shutdown,daemon=True).start()
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
-    logging.info('LANytic läuft auf http://%s:%s (%s)', config.host, config.port, 'DEMO' if config.demo else 'LIVE')
+    logging.info('LANytic running at http://%s:%s (%s)', config.host, config.port, 'DEMO' if config.demo else 'LIVE')
     try:
         server.serve_forever()
     finally:

@@ -1,42 +1,76 @@
 # LANytic
 
-Ein aufgeräumter, selbst hostbarer Überblick über dein LAN. Geräte per ARP entdecken, als **Known** markieren und mit eigenen Namen und Beschreibungen versehen. Eigenständige Implementierung, kein WatchYourLAN-Fork.
+A clean, self-hosted view of your LAN. Discover devices with ARP, mark them as **Known**, and add your own names and descriptions. An independent implementation, not a WatchYourLAN fork.
 
-## Funktionen
+## Features
 
-- Automatische und manuelle IPv4-ARP-Scans auf einem oder mehreren Interfaces.
-- Persistente Geräteübersicht mit Online-/Offline-Status, MAC, IP und Hersteller.
-- Known-Markierung, eigene Gerätenamen und Beschreibungen; bleiben bei IP-Wechsel erhalten.
-- Suche, Known-/Status-Filter, Sortierung und CSV-Export der gefilterten Liste.
-- Scan-Verlauf (letzte 100 Durchläufe), verständliche Fehleranzeige.
-- Responsive deutsche Oberfläche; keine CDNs, Tracker oder externen Fonts.
-- SQLite-Datenvolume, HTTP-Basic-Auth, Healthcheck und Docker Compose.
+- Automatic and manual IPv4 ARP scans across one or more host interfaces.
+- Persistent inventory with online/offline status, IP, MAC, and vendor.
+- Known status, custom names, and descriptions that survive IP changes.
+- Search, Known/status filters, sorting, and filtered CSV export.
+- Scan history with the latest 100 runs and explicit error details.
+- English interface with Light / Dark / System appearance, matching Simple SMTP Test. Your theme choice is remembered locally; system mode follows OS changes.
+- Responsive layout; no CDNs, trackers, or external fonts.
+- SQLite volume, HTTP Basic authentication, healthcheck, and Docker Compose.
 
-## Docker Compose auf deinem Linux-Server
+## Docker Compose on Linux
 
-Voraussetzung: Docker Engine mit Compose v2 und ein LAN-Interface auf dem Host.
+Requirements: Docker Engine with Compose v2 and a host LAN interface.
 
 ```sh
+git clone https://github.com/forke24x7/LANytic.git
+cd LANytic
 cp .env.example .env
 ip -br link
 ```
 
-In `.env` mindestens `IFACES` und ein eigenes `AUTH_PASSWORD` eintragen. Mehrere Interfaces werden mit Leerzeichen getrennt, beispielsweise `IFACES=eth0 eth0.20`. Anschließend:
+Edit `.env`: set `IFACES` to your actual interface and choose your own `AUTH_PASSWORD`. Multiple interfaces are space-separated, e.g. `IFACES=eth0 eth0.20`.
 
 ```sh
 docker compose up -d --build
 docker compose logs -f
 ```
 
-Öffne `http://SERVER-IP:8840`. Der Browser fragt nach Benutzername (Standard: `admin`) und deinem Passwort. Der erste Scan startet automatisch, danach standardmäßig alle 120 Sekunden. Passwort und echte Netzwerkdaten gehören nicht ins Repository; `.env` und `data/` sind ausgeschlossen.
+Open `http://SERVER-IP:8840`. Sign in with `admin` (or your configured user) and your password. The first scan starts automatically, then repeats every 120 seconds by default. `.env` and database files are excluded from Git.
 
-`network_mode: host` ist für den direkten ARP-Zugriff vorgesehen. Deshalb gibt es kein `ports:`-Mapping; `PORT` bestimmt den Port auf dem Host. Das Compose-Setup ist für **Linux** gedacht. Docker Desktop auf macOS/Windows besitzt keinen gleichwertigen direkten Zugriff auf das physische LAN; für die Oberfläche nutze dort den Demo-Modus.
+The live setup uses **Linux host networking**, with no `ports:` mapping; `PORT` controls the port on the host. Docker Desktop on macOS/Windows does not provide equivalent ARP access to the physical LAN. Use demo mode there to explore the UI.
 
-Das Image läuft als root mit ausschließlich `NET_RAW` und `NET_ADMIN`, weil `arp-scan` Rohpakete und das Host-Interface benötigt. Es nutzt kein `privileged: true`. Das Root-Dateisystem ist schreibgeschützt; nur `/data` und `/tmp` sind beschreibbar. Installierte Programme und OUI-Herstellerdaten stammen aus Debian-Paketen.
+The image runs as root with only `NET_RAW` and `NET_ADMIN` capabilities for `arp-scan`. It does not use `privileged: true`. The root filesystem is read-only; `/data` and `/tmp` are writable. The scanner and its vendor database come from Debian packages.
 
-HTTP-Basic-Auth über HTTP verschlüsselt das Passwort nicht. Für Zugriff außerhalb deines vertrauten LANs verwende einen HTTPS-Reverse-Proxy oder VPN und beschränke den direkten Host-Port per Firewall. Der Proxy muss den ursprünglichen `Host`-Header weiterreichen. Für ausschließlich lokalen Proxyzugriff lässt sich `HOST=127.0.0.1` setzen. LANytic ist ein LAN-Werkzeug, kein öffentlicher Internetdienst.
+HTTP Basic authentication over plain HTTP does not encrypt credentials. Use an HTTPS reverse proxy or VPN for access outside your trusted LAN and restrict direct access to the host port. A reverse proxy must preserve the original `Host` header. Set `HOST=127.0.0.1` for a proxy on the same host when appropriate.
 
-### Betrieb und Updates
+## Demo without LAN access
+
+```sh
+docker compose -f docker-compose.demo.yml up -d --build
+```
+
+Open `http://localhost:8841`. Sample data is clearly labeled, uses synthetic MAC addresses, and has a separate volume. Editing, filters, and persistence work. Demo scans simulate a run and send no ARP packets.
+
+Without Docker, use Python 3.9+; no pip dependencies:
+
+```sh
+DEMO=true PORT=8841 python3 app.py
+```
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `IFACES` | empty | Space-separated host interfaces; required for live scans |
+| `SCAN_INTERVAL` | `120` | Seconds after scan completion, minimum 10 |
+| `SCAN_TIMEOUT` | `60` | Timeout per interface, 1–600 seconds |
+| `PORT` | `8840` | HTTP port |
+| `HOST` | `127.0.0.1` natively, `0.0.0.0` in Docker | Bind address |
+| `DB_PATH` | `data/lan.sqlite3` natively, `/data/lan.sqlite3` in Docker | SQLite path |
+| `AUTH_USER` | `admin` | HTTP Basic username |
+| `AUTH_PASSWORD` | empty natively, required in live Compose | HTTP Basic password |
+| `DEMO` | `false` | Sample data and simulated scans |
+| `TZ` | `Europe/Berlin` in Compose | Container log timezone |
+
+Database/API timestamps use UTC. The English UI formats timestamps in your browser's local timezone. Container configuration changes take effect after `docker compose up -d`.
+
+## Operation
 
 ```sh
 git pull
@@ -45,55 +79,24 @@ docker compose ps
 docker compose logs --tail=100
 ```
 
-Alle Gerätedaten liegen im benannten Volume `lanytic-data` (Compose versieht es mit einem Projektpräfix). `docker compose down` erhält das Volume; `down -v` löscht es. Vor Backup den Dienst stoppen und das Datenvolume sichern, damit SQLite-Datei und WAL konsistent bleiben. Konfigurationsänderungen werden nach `docker compose up -d` übernommen.
+Device data lives in the `lanytic-data` named volume (prefixed by the Compose project name). `docker compose down` preserves it; `down -v` deletes it. Stop the service before backing up the entire volume so the SQLite database and WAL remain consistent.
 
-## Demo ohne LAN-Zugriff
+## Discovery limits
 
-```sh
-docker compose -f docker-compose.demo.yml up -d --build
-```
+Identity is `(MAC address, interface)`. IP changes do not overwrite your custom information. The same MAC on different interfaces is tracked separately; randomized MAC addresses can appear as new devices.
 
-Öffne `http://localhost:8841`. Die Demo enthält klar gekennzeichnete Beispieldaten mit synthetischen MAC-Adressen und ein eigenes Datenvolume. Bearbeiten, Filtern und Speichern funktionieren; Demo-Scans simulieren einen Durchlauf. Es werden keine echten ARP-Pakete gesendet.
+ARP discovers the local IPv4 broadcast segment, not routed subnets or IPv6 devices. VLANs need corresponding host interfaces. This version has no port scanning, DNS name lookup, or notifications. Vendors come from the OUI database bundled with `arp-scan` and may be unknown.
 
-Alternativ ohne Docker, mit Python 3.9+ und ohne Python-Abhängigkeiten:
+Online means a device responded during the last successful scan. No response means Offline, which may also reflect sleep mode or packet loss. If any interface fails or times out, the entire run is discarded and the previous device status is preserved. Removed interfaces keep their last observed status; the interface and last-seen time are visible in device details. Old devices are not automatically deleted.
 
-```sh
-DEMO=true PORT=8841 python3 app.py
-```
-
-## Konfiguration
-
-| Variable | Standard | Bedeutung |
-|---|---|---|
-| `IFACES` | leer | Host-Interfaces, mit Leerzeichen getrennt; live erforderlich |
-| `SCAN_INTERVAL` | `120` | Abstand nach abgeschlossenem Scan in Sekunden (mindestens 10) |
-| `SCAN_TIMEOUT` | `60` | Zeitlimit je Interface in Sekunden (1–600) |
-| `PORT` | `8840` | HTTP-Port |
-| `HOST` | `127.0.0.1` nativ, `0.0.0.0` im Image/Compose | Bind-Adresse |
-| `DB_PATH` | `data/lan.sqlite3` nativ, `/data/lan.sqlite3` im Container | Datenbankdatei |
-| `AUTH_USER` | `admin` | HTTP-Basic-Benutzer |
-| `AUTH_PASSWORD` | leer nativ, erforderlich in Live-Compose | HTTP-Basic-Passwort |
-| `DEMO` | `false` | Beispieldaten und simulierte Scans |
-| `TZ` | `Europe/Berlin` in Compose | Zeitzone für Container-Logs |
-
-Zeitstempel in SQLite und der API sind UTC; die Oberfläche zeigt sie in der lokalen Browser-Zeitzone.
-
-## Erkennung und Grenzen
-
-Die Geräteidentität ist `(MAC-Adresse, Interface)`. Ein IP-Wechsel überschreibt nur die aktuelle IP, nicht deine eigenen Angaben. Dieselbe MAC auf mehreren Interfaces wird separat geführt. Private/zufällig wechselnde MAC-Adressen erscheinen als neue Geräte.
-
-ARP erreicht das lokale IPv4-Broadcast-Segment, keine gerouteten Netze oder IPv6-Geräte. VLANs benötigen passende Host-Interfaces. Es gibt keine Port-Scans, DNS-Namensauflösung oder Benachrichtigungen in dieser ersten Version. Der Hersteller stammt aus der mit `arp-scan` gelieferten OUI-Datenbank und kann unbekannt sein.
-
-Online bedeutet: Das Gerät hat beim letzten erfolgreichen Scan geantwortet. Eine fehlende Antwort bedeutet Offline, kann aber auch durch Schlafmodus oder Paketverlust entstehen. Bei einem Fehler oder Timeout auf einem Interface wird der gesamte Durchlauf verworfen und der letzte Gerätestatus bleibt bestehen. Entfernte Interfaces behalten ihren letzten Stand; das Interface und der letzte Sichtungszeitpunkt sind in den Details sichtbar. Alte Geräte werden bewusst nicht automatisch gelöscht.
-
-## Entwicklung und Tests
+## Development
 
 ```sh
 python3 -m unittest discover -s tests -v
 ```
 
-Die Tests prüfen Parser, IP-Wechsel, persistente Metadaten, Fehler/Timeouts, parallele Scan-Anforderungen, API-Validierung, Auth und CSRF-Schutz. GitHub Actions führt sie aus, baut das Docker-Image und startet einen Demo-Container als Smoke-Test.
+Tests cover parsing, IP changes, persistent metadata, failures/timeouts, concurrent scan requests, API validation, authentication, and CSRF protection. GitHub Actions also builds the Docker image, starts a demo container, and validates both Compose files.
 
-API: `GET /api/state`, `POST /api/scan` mit `{}`, `PATCH /api/devices/<id>` mit `known`, `name` und/oder `description`. Schreibanfragen benötigen `Content-Type: application/json`. `GET /healthz` prüft den HTTP-Dienst, nicht die Scanner-Funktion; dafür den Scan-Verlauf ansehen.
+API: `GET /api/state`, `POST /api/scan` with `{}`, `PATCH /api/devices/<id>` with `known`, `name`, and/or `description`. Writes require `Content-Type: application/json`. `GET /healthz` checks the HTTP service; inspect scan history for scanner health.
 
-Technischer Hintergrund und die Abgrenzung zu WatchYourLAN: [docs/architecture.md](docs/architecture.md).
+See [docs/architecture.md](docs/architecture.md) for the technical background.

@@ -1,6 +1,8 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const icons = {
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/>',
+  moon:'<path d="M20 14a8 8 0 1 1-10-10 6 6 0 0 0 10 10Z"/>',
   devices:'<rect x="3" y="3" width="18" height="12" rx="2"/><path d="M8 21h8M12 15v6"/>',
   activity:'<path d="M3 12h4l3-8 4 16 3-8h4"/>',
   settings:'<path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1M5.6 18.4l2.1-2.1m8.6-8.6 2.1-2.1"/><circle cx="12" cy="12" r="5"/>',
@@ -18,71 +20,74 @@ const icons = {
 const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.devices}</svg>`;
 document.querySelectorAll('[data-icon]').forEach(el => {el.innerHTML=icon(el.dataset.icon);});
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-let state=null, filter='all', sort='ip', descending=false, selectedId=null, requesting=false, scanRequested=false, toastTimer;
-const date = value => value ? new Date(value).toLocaleString('de-DE',{dateStyle:'short',timeStyle:'short'}) : '–';
+let state=null, filter='all', sort='ip', descending=false, selectedId=null, requesting=false, scanRequested=false, toastTimer, renderedDevicesKey='';
+const date = value => value ? new Date(value).toLocaleString('en-GB',{dateStyle:'short',timeStyle:'short'}) : '–';
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>{$('toast').hidden=true;},3500);}
 async function api(path,method='GET',body){
   const response = await fetch(path,{method,headers:body ? {'Content-Type':'application/json'} : {},body:body ? JSON.stringify(body) : undefined});
-  if(!response.ok){let result;try{result=await response.json();}catch{result={};}throw new Error(result.error || `Anfrage fehlgeschlagen (${response.status}).`);}
+  if(!response.ok){let result;try{result=await response.json();}catch{result={};}throw new Error(result.error || `Request failed (${response.status}).`);}
   return response.json();
 }
 function visibleDevices(){
   const q=$('search').value.toLocaleLowerCase(), status=$('status-filter').value;
   return state.devices.filter(d => (filter==='all'||(filter==='known'?d.known:!d.known)) && (status==='all'||(status==='online'?d.online:!d.online)) && [d.name,d.description,d.ip,d.mac,d.vendor,d.interface].some(v=>v.toLocaleLowerCase().includes(q)))
-    .sort((a,b)=>{let n=sort==='ip' ? a.ip.split('.').reduce((n,v)=>n*256+Number(v),0)-b.ip.split('.').reduce((n,v)=>n*256+Number(v),0) : (a.name||a.vendor||a.mac).localeCompare(b.name||b.vendor||b.mac,'de');return descending?-n:n;});
+    .sort((a,b)=>{let n=sort==='ip' ? a.ip.split('.').reduce((n,v)=>n*256+Number(v),0)-b.ip.split('.').reduce((n,v)=>n*256+Number(v),0) : (a.name||a.vendor||a.mac).localeCompare(b.name||b.vendor||b.mac,'en');return descending?-n:n;});
 }
 function deviceIcon(d){const text=(d.name+' '+d.vendor).toLowerCase();if(/router|fritz|access point|ubiquiti/.test(text))return 'router';if(/nas|diskstation|synology|assistant|raspberry/.test(text))return 'server';if(/iphone|phone/.test(text))return 'phone';return 'devices';}
 function renderDevices(){
   if(!state)return;
   const devices=visibleDevices();
-  $('devices-body').innerHTML=devices.map(d=>`<tr><td><div class="device-cell"><span class="device-icon">${icon(deviceIcon(d))}</span><div><button class="device-title" data-detail="${d.id}">${escapeHtml(d.name || d.vendor || 'Unbenanntes Gerät')}</button><div class="device-desc">${escapeHtml(d.description || (d.known ? d.vendor : 'Noch nicht zugeordnet'))}</div></div></div></td><td class="mono">${escapeHtml(d.ip)}</td><td class="mono mac">${escapeHtml(d.mac)}</td><td><span class="status ${d.online?'':'offline'}"><span class="dot green"></span>${d.online?'Online':'Offline'}</span></td><td><button class="known-badge ${d.known?'':'unknown'}" data-known="${d.id}" aria-label="${d.known?'Known-Markierung entfernen':'Als Known markieren'}: ${escapeHtml(d.name||d.ip)}">${icon(d.known?'check':'unknown')}${d.known?'Known':'Unbekannt'}</button></td><td><button class="row-detail" data-detail="${d.id}" aria-label="Details zu ${escapeHtml(d.name||d.ip)}">↗</button></td></tr>`).join('');
+  const key=JSON.stringify({devices,total:state.devices.length});
+  if(key===renderedDevicesKey)return;
+  renderedDevicesKey=key;
+  $('devices-body').innerHTML=devices.map(d=>`<tr><td><div class="device-cell"><span class="device-icon">${icon(deviceIcon(d))}</span><div><button class="device-title" data-detail="${d.id}">${escapeHtml(d.name || d.vendor || 'Unnamed device')}</button><div class="device-desc">${escapeHtml(d.description || (d.known ? d.vendor : 'Not identified yet'))}</div></div></div></td><td class="mono">${escapeHtml(d.ip)}</td><td class="mono mac">${escapeHtml(d.mac)}</td><td><span class="status ${d.online?'':'offline'}"><span class="dot green"></span>${d.online?'Online':'Offline'}</span></td><td><button class="known-badge ${d.known?'':'unknown'}" data-known="${d.id}" aria-label="${d.known?'Remove Known status':'Mark as Known'}: ${escapeHtml(d.name||d.ip)}">${icon(d.known?'check':'unknown')}${d.known?'Known':'Unknown'}</button></td><td><button class="row-detail" data-detail="${d.id}" aria-label="Details for ${escapeHtml(d.name||d.ip)}">↗</button></td></tr>`).join('');
   $('empty-state').hidden=devices.length>0;
-  $('empty-state').querySelector('h3').textContent=state.devices.length?'Keine passenden Geräte':'Noch keine Geräte';
-  $('empty-state').querySelector('p').textContent=state.devices.length?'Ändere die Suche oder deine Filter.':'Starte einen Scan, um dein Netzwerk kennenzulernen.';
-  $('result-count').textContent=`${devices.length} von ${state.devices.length} Geräten`;
+  $('empty-state').querySelector('h3').textContent=state.devices.length?'No matching devices':'No devices yet';
+  $('empty-state').querySelector('p').textContent=state.devices.length?'Try a different search or filter.':'Run a scan to discover your network.';
+  $('result-count').textContent=`${devices.length} of ${state.devices.length} devices`;
 }
 function render(){
   const d=state.devices,known=d.filter(d=>d.known).length,online=d.filter(d=>d.online).length,unknown=d.length-known;
   for(const [id,val] of Object.entries({'stat-total':d.length,'stat-online':online,'stat-known':known,'stat-unknown':unknown,'nav-count':d.length,'inventory-count':d.length,'tab-total':d.length,'tab-known':known,'tab-unknown':unknown}))$(id).textContent=val;
-  $('unknown-note').textContent=unknown ? 'Zeit, sie kennenzulernen' : 'Alle Geräte sind zugeordnet';
+  $('unknown-note').textContent=unknown ? 'Time to get to know them' : 'All devices are identified';
   $('demo-banner').hidden=!state.config.demo;
-  $('mode').textContent=state.config.demo?'DEMO':'LIVE · LOKAL';
+  $('mode').textContent=state.config.demo?'DEMO':'LIVE · LOCAL';
   const successful=state.scans.find(s=>s.status==='success'),latest=state.scans[0];
-  $('last-scan').textContent=successful?`Letzter Scan: ${date(successful.finished_at)}`:'Noch kein erfolgreicher Scan';
-  if(latest?.status==='error'){$('connection-error').hidden=false;$('connection-error').textContent='Scan fehlgeschlagen: '+latest.error;}
+  $('last-scan').textContent=successful?`Last scan: ${date(successful.finished_at)}`:'No successful scans yet';
+  if(latest?.status==='error'){$('connection-error').hidden=false;$('connection-error').textContent='Scan failed: '+latest.error;}
   else $('connection-error').hidden=true;
-  for(const id of ['scan-button','history-scan']){const b=$(id);b.disabled=state.scanning||scanRequested;b.classList.toggle('scanning',state.scanning);b.innerHTML=icon('scan')+`<span>${state.scanning?'Scan läuft …':state.config.demo?'Demo-Scan starten':'Netzwerk scannen'}</span>`;}
+  for(const id of ['scan-button','history-scan']){const b=$(id);b.disabled=state.scanning||scanRequested;b.classList.toggle('scanning',state.scanning);b.innerHTML=icon('scan')+`<span>${state.scanning?'Scanning …':state.config.demo?'Run demo scan':'Scan network'}</span>`;}
   renderDevices();
-  $('scans-body').innerHTML=state.scans.map(s=>`<tr><td>${date(s.started_at)}</td><td><span class="status ${s.status==='error'?'error':s.status==='running'?'offline':''}">${s.status==='success'?'Erfolgreich':s.status==='error'?'Fehlgeschlagen':'Läuft …'}</span></td><td>${s.status==='success'?s.found:'–'}</td><td>${escapeHtml(s.error|| (s.finished_at?'Abgeschlossen: '+date(s.finished_at):'Scan wird ausgeführt'))}</td></tr>`).join('');
+  $('scans-body').innerHTML=state.scans.map(s=>`<tr><td>${date(s.started_at)}</td><td><span class="status ${s.status==='error'?'error':s.status==='running'?'offline':''}">${s.status==='success'?'Successful':s.status==='error'?'Failed':'Running …'}</span></td><td>${s.status==='success'?s.found:'–'}</td><td>${escapeHtml(s.error|| (s.finished_at?'Completed: '+date(s.finished_at):'Scan in progress'))}</td></tr>`).join('');
   $('no-scans').hidden=state.scans.length>0;
-  $('config-details').innerHTML=`<dt>Modus</dt><dd>${state.config.demo?'Demo mit Beispieldaten':'Live · ARP-Scan'}</dd><dt>Interfaces</dt><dd>${escapeHtml(state.config.interfaces.join(', ')||'Nicht konfiguriert')}</dd><dt>Scan-Intervall</dt><dd>${state.config.interval} Sekunden</dd><dt>Speicherung</dt><dd>SQLite · Persistentes Datenvolume</dd><dt>Nächster Scan</dt><dd>${state.scanning?'Scan läuft':state.next_scan?date(state.next_scan*1000):'–'}</dd>`;
+  $('config-details').innerHTML=`<dt>Mode</dt><dd>${state.config.demo?'Demo with sample devices':'Live · ARP scan'}</dd><dt>Interfaces</dt><dd>${escapeHtml(state.config.interfaces.join(', ')||'Not configured')}</dd><dt>Scan interval</dt><dd>${state.config.interval} seconds</dd><dt>Storage</dt><dd>SQLite · Persistent data volume</dd><dt>Next scan</dt><dd>${state.scanning?'Scanning':state.next_scan?date(state.next_scan*1000):'–'}</dd>`;
 }
 async function refresh(){
   if(requesting)return;requesting=true;
-  try{state=await api('/api/state');render();}catch(e){$('connection-error').textContent=e.message;$('connection-error').hidden=false;$('mode').textContent='VERBINDUNG FEHLT';}
+  try{state=await api('/api/state');render();}catch(e){$('connection-error').textContent=e.message;$('connection-error').hidden=false;$('mode').textContent='DISCONNECTED';}
   finally{requesting=false;}
 }
 async function scan(){
   scanRequested=true;render();
-  try{await api('/api/scan','POST',{});toast(state.config.demo?'Demo-Scan gestartet.':'Netzwerk-Scan gestartet.');}catch(e){toast(e.message);}
+  try{await api('/api/scan','POST',{});toast(state.config.demo?'Demo scan started.':'Network scan started.');}catch(e){toast(e.message);}
   finally{scanRequested=false;await refresh();}
 }
 function openDevice(id){
   const d=state.devices.find(d=>d.id===id);if(!d)return;selectedId=id;
-  $('dialog-title').textContent=d.name||d.vendor||'Unbenanntes Gerät';
+  $('dialog-title').textContent=d.name||d.vendor||'Unnamed device';
   $('device-name').value=d.name;$('device-description').value=d.description;$('device-known').checked=d.known;$('form-error').hidden=true;
-  $('device-meta').innerHTML=[['IP-Adresse',d.ip],['MAC-Adresse',d.mac],['Hersteller',d.vendor||'Unbekannt'],['Interface',d.interface],['Zuerst gesehen',date(d.first_seen)],['Zuletzt gesehen',date(d.last_seen)]].map(([k,v])=>`<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('');
+  $('device-meta').innerHTML=[['IP address',d.ip],['MAC address',d.mac],['Vendor',d.vendor||'Unknown'],['Interface',d.interface],['First seen',date(d.first_seen)],['Last seen',date(d.last_seen)]].map(([k,v])=>`<dt>${k}</dt><dd>${escapeHtml(v)}</dd>`).join('');
   $('device-dialog').showModal();
 }
 $('devices-body').addEventListener('click',async e=>{
   const detail=e.target.closest('[data-detail]');if(detail){openDevice(Number(detail.dataset.detail));return;}
   const button=e.target.closest('[data-known]');if(!button)return;
   const d=state.devices.find(d=>d.id===Number(button.dataset.known));button.disabled=true;
-  try{await api(`/api/devices/${d.id}`,'PATCH',{known:!d.known});toast(d.known?'Known-Markierung entfernt.':'Gerät als Known markiert.');await refresh();}catch(e){button.disabled=false;toast(e.message);}
+  try{await api(`/api/devices/${d.id}`,'PATCH',{known:!d.known});toast(d.known?'Known status removed.':'Device marked as Known.');await refresh();}catch(e){button.disabled=false;toast(e.message);}
 });
 $('device-form').addEventListener('submit',async e=>{
   e.preventDefault();$('save-button').disabled=true;$('form-error').hidden=true;
-  try{await api(`/api/devices/${selectedId}`,'PATCH',{name:$('device-name').value.trim(),description:$('device-description').value.trim(),known:$('device-known').checked});$('device-dialog').close();toast('Gerät gespeichert.');await refresh();}
+  try{await api(`/api/devices/${selectedId}`,'PATCH',{name:$('device-name').value.trim(),description:$('device-description').value.trim(),known:$('device-known').checked});$('device-dialog').close();toast('Device saved.');await refresh();}
   catch(e){$('form-error').textContent=e.message;$('form-error').hidden=false;}
   finally{$('save-button').disabled=false;}
 });
@@ -95,8 +100,11 @@ for(const field of ['name','ip'])$('sort-'+field).addEventListener('click',()=>{
 $('export-button').addEventListener('click',()=>{
   if(!state)return;
   const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"';
-  const lines=[['Name','Beschreibung','IP','MAC','Hersteller','Interface','Known','Online','Zuerst gesehen','Zuletzt gesehen'],...visibleDevices().map(d=>[d.name,d.description,d.ip,d.mac,d.vendor,d.interface,d.known,d.online,d.first_seen,d.last_seen])];
+  const lines=[['Name','Description','IP','MAC','Vendor','Interface','Known','Online','First seen','Last seen'],...visibleDevices().map(d=>[d.name,d.description,d.ip,d.mac,d.vendor,d.interface,d.known,d.online,d.first_seen,d.last_seen])];
   const url=URL.createObjectURL(new Blob(['\ufeff'+lines.map(r=>r.map(cell).join(';')).join('\r\n')],{type:'text/csv;charset=utf-8'}));
-  const a=document.createElement('a');a.href=url;a.download='lanytic-geraete.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Gefilterte Geräteliste exportiert.');
+  const a=document.createElement('a');a.href=url;a.download='lanytic-devices.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Filtered device list exported.');
 });
 refresh();setInterval(refresh,2500);
+
+document.querySelectorAll("[data-theme-choice]").forEach(button => button.addEventListener("click", () => window.LANyticTheme.set(button.dataset.themeChoice)));
+window.LANyticTheme.update();
