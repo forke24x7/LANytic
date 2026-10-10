@@ -1,3 +1,4 @@
+# Package LANytic with its ARP scanner, interface tools, and timezone data.
 FROM python:3.13-slim-bookworm
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 HOST=0.0.0.0 DB_PATH=/data/lan.sqlite3
 RUN apt-get update && apt-get install -y --no-install-recommends arp-scan iproute2 tzdata \
