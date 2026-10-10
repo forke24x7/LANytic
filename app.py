@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""LANytic: independent LAN inventory; Python standard library only."""
+import base64
+import hmac
+import ipaddress
+import json
+import logging
+import os
+from pathlib import Path
+import re
+import signal
+import socket
+import sqlite3
+import subprocess
+import threading
+import time
+from datetime import datetime, timezone
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
+
+ROOT = Path(__file__).resolve().parent
+
+def now():
+    return datetime.now(timezone.utc).isoformat(timespec='seconds')
+
+class Config:
+    def __init__(self):
+        self.demo = os.getenv('DEMO', 'false').lower() == 'true'
+        self.host = os.getenv('HOST', '127.0.0.1')
+        self.port = int(os.getenv('PORT', '8840'))
+        self.interfaces = list(dict.fromkeys(os.getenv('IFACES', '').split()))
+        if any(not re.fullmatch(r'[a-zA-Z0-9_.:-]{1,32}', i) for i in self.interfaces):
+            raise ValueError('IFACES enthält einen ungültigen Interfacenamen.')
+        self.interval = int(os.getenv('SCAN_INTERVAL', '120'))
+        self.timeout = int(os.getenv('SCAN_TIMEOUT', '60'))
+        if self.interval < 10 or not 1 <= self.timeout <= 600:
+            raise ValueError('SCAN_INTERVAL muss >= 10, SCAN_TIMEOUT zwischen 1 und 600 sein.')
+        self.db = os.getenv('DB_PATH', str(ROOT / 'data' / ('demo.sqlite3' if self.demo else 'lan.sqlite3')))
+        self.username = os.getenv('AUTH_USER', 'admin')
+        self.password = os.getenv('AUTH_PASSWORD', '')
+
+def parse_arp(output, interface):
+    devices = {}
+    for line in output.splitlines():
+        fields = line.split(None, 2)
+        if len(fields) < 2:
+            continue
+        try:
+            ip = str(ipaddress.IPv4Address(fields[0]))
+        except ipaddress.AddressValueError:
+            continue
+        mac = fields[1].lower()
+        if not re.fullmatch(r'(?:[0-9a-f]{2}:){5}[0-9a-f]{2}', mac):
+            continue
+        devices[mac] = dict(ip=ip, mac=mac, interface=interface,
+                            vendor=fields[2].strip() if len(fields) == 3 else '')
+    return list(devices.values())
+
+class Store:
+    def __init__(self, path):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.path = path
+        with self.connect() as db:
+            db.executescript('''
+                PRAGMA journal_mode=WAL;
+                CREATE TABLE IF NOT EXISTS devices (
+                    id INTEGER PRIMARY KEY, mac TEXT NOT NULL, interface TEXT NOT NULL,
+                    ip TEXT NOT NULL, vendor TEXT NOT NULL DEFAULT '',
+                    name TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '',
+                    known INTEGER NOT NULL DEFAULT 0, online INTEGER NOT NULL DEFAULT 1,
+                    first_seen TEXT NOT NULL, last_seen TEXT NOT NULL,
+                    UNIQUE(mac, interface));
+                CREATE TABLE IF NOT EXISTS scans (
+                    id INTEGER PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT,
+                    status TEXT NOT NULL, found INTEGER NOT NULL DEFAULT 0, error TEXT);
+            ''')
+            db.execute("UPDATE scans SET status='error', error='Scan durch Neustart unterbrochen.', finished_at=? WHERE status='running'", (now(),))
+
+    @contextmanager
+    def connect(self):
+        db = sqlite3.connect(self.path, timeout=15)
+        db.row_factory = sqlite3.Row
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
+    def devices(self):
+        with self.connect() as db:
+            rows = [dict(r) for r in db.execute('SELECT * FROM devices')]
+        for r in rows:
+            r['known'], r['online'] = bool(r['known']), bool(r['online'])
+        return sorted(rows, key=lambda r: (not r['online'], int(ipaddress.IPv4Address(r['ip'])), r['interface']))
+
+    def apply_scan(self, observations, interfaces, scan_id):
+        stamp = now()
+        with self.connect() as db:
+            for interface in interfaces:
+                db.execute('UPDATE devices SET online=0 WHERE interface=?', (interface,))
+            for d in observations:
+                db.execute('''INSERT INTO devices (mac,interface,ip,vendor,first_seen,last_seen)
+                    VALUES (?,?,?,?,?,?) ON CONFLICT(mac,interface) DO UPDATE SET
+                    ip=excluded.ip, vendor=excluded.vendor, online=1, last_seen=excluded.last_seen''',
+                    (d['mac'], d['interface'], d['ip'], d['vendor'], stamp, stamp))
+            db.execute("UPDATE scans SET finished_at=?,status='success',found=? WHERE id=?", (stamp, len(observations), scan_id))
+            db.execute('DELETE FROM scans WHERE id NOT IN (SELECT id FROM scans ORDER BY id DESC LIMIT 100)')
+
+    def update(self, device_id, changes):
+        allowed = {'known', 'name', 'description'}
+        if not changes or not isinstance(changes, dict) or set(changes) - allowed:
+            raise ValueError('Erlaubte Felder: known, name, description.')
+        for key, value in changes.items():
+            if key == 'known':
+                if type(value) is not bool:
+                    raise ValueError('known muss true oder false sein.')
+            elif not isinstance(value, str) or len(value) > (100 if key == 'name' else 2000):
+                raise ValueError('Name maximal 100, Beschreibung maximal 2000 Zeichen.')
+        with self.connect() as db:
+            cursor = db.execute('UPDATE devices SET ' + ','.join(k + '=?' for k in changes) + ' WHERE id=?',
+                                list(changes.values()) + [device_id])
+            if not cursor.rowcount:
+                raise KeyError('Gerät nicht gefunden.')
+
+    def scan_history(self):
+        with self.connect() as db:
+            return [dict(r) for r in db.execute('SELECT * FROM scans ORDER BY id DESC LIMIT 100')]
+
+    def seed_demo(self):
+        if self.devices():
+            return
+        entries = [
+            ('1', '02:00:00:00:00:01', 'AVM', 'FRITZ!Box 7590', 'Router · Flur', True, True),
+            ('12', '02:00:00:00:00:02', 'Ubiquiti Networks', 'Access Point', 'WLAN · Wohnzimmer', True, True),
+            ('24', '02:00:00:00:00:03', 'Synology', 'DiskStation', 'NAS · Backups & Medien', True, True),
+            ('32', '02:00:00:00:00:04', 'Apple', 'MacBook Pro', 'Arbeitsgerät', True, True),
+            ('45', '02:00:00:00:00:05', 'Raspberry Pi', 'Home Assistant', 'Smart Home · Technikschrank', True, True),
+            ('56', '02:00:00:00:00:06', 'Espressif', '', '', False, True),
+            ('67', '02:00:00:00:00:07', 'Apple', 'iPhone', 'Privat', True, True),
+            ('81', '02:00:00:00:00:08', 'Unknown', '', '', False, True),
+            ('92', '02:00:00:00:00:09', 'Sonos', 'Sonos One', 'Lautsprecher · Küche', True, False),
+            ('108', '02:00:00:00:00:0a', 'Samsung', 'Fernseher', 'Wohnzimmer', True, False),
+        ]
+        stamp = now()
+        with self.connect() as db:
+            for ip, mac, vendor, name, desc, known, online in entries:
+                db.execute('''INSERT INTO devices (mac,interface,ip,vendor,name,description,known,online,first_seen,last_seen)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)''', (mac, 'demo0', '192.168.178.'+ip, vendor, name, desc, known, online, stamp, stamp))
+            db.execute("INSERT INTO scans (started_at,finished_at,status,found) VALUES (?,?,'success',8)", (stamp, stamp))
+
+class Scanner:
+    def __init__(self, config, store):
+        self.config, self.store = config, store
+        self.lock = threading.Lock()
+        self.stop = threading.Event()
+        self.next_scan = None
+        self.thread = None
+
+    def trigger(self):
+        if not self.lock.acquire(blocking=False):
+            return False
+        try:
+            self.thread = threading.Thread(target=self.run, daemon=True)
+            self.thread.start()
+        except Exception:
+            self.lock.release()
+            raise
+        return True
+
+    def run(self):
+        scan_id = None
+        try:
+            with self.store.connect() as db:
+                scan_id = db.execute("INSERT INTO scans (started_at,status) VALUES (?,'running')", (now(),)).lastrowid
+            if self.config.demo:
+                self.stop.wait(1)
+                observations = [{k: d[k] for k in ('mac','interface','ip','vendor')} for d in self.store.devices() if d['online']]
+                interfaces = ['demo0']
+            else:
+                interfaces = self.config.interfaces
+                if not interfaces:
+                    raise RuntimeError('Kein Interface konfiguriert. Setze IFACES, z. B. eth0 oder enp3s0.')
+                observations = []
+                for interface in interfaces:
+                    result = subprocess.run(['arp-scan', '--localnet', '--interface='+interface, '--retry=2', '--plain', '--ignoredups'],
+                                            capture_output=True, text=True, timeout=self.config.timeout, check=False)
+                    if result.returncode:
+                        raise RuntimeError('Scan auf %s fehlgeschlagen: %s' % (interface, result.stderr.strip()[:500]))
+                    observations.extend(parse_arp(result.stdout, interface))
+            self.store.apply_scan(observations, interfaces, scan_id)
+        except Exception as exc:
+            message = str(exc)
+            if isinstance(exc, FileNotFoundError):
+                message = 'arp-scan fehlt. Verwende das Docker-Image oder installiere arp-scan auf dem Host.'
+            logging.error('Scan fehlgeschlagen: %s', message)
+            if scan_id is not None:
+                with self.store.connect() as db:
+                    db.execute("UPDATE scans SET status='error',finished_at=?,error=? WHERE id=?", (now(), message, scan_id))
+                    db.execute('DELETE FROM scans WHERE id NOT IN (SELECT id FROM scans ORDER BY id DESC LIMIT 100)')
+        finally:
+            self.next_scan = time.time() + self.config.interval
+            self.lock.release()
+
+    def schedule(self):
+        self.next_scan = time.time() + self.config.interval if self.config.demo else time.time()
+        def loop():
+            while not self.stop.wait(1):
+                if not self.lock.locked() and time.time() >= self.next_scan:
+                    self.trigger()
+        threading.Thread(target=loop, daemon=True).start()
+
+class AppServer(ThreadingHTTPServer):
+    daemon_threads = True
+    def __init__(self, address, config, store, scanner):
+        self.config, self.store, self.scanner = config, store, scanner
+        super().__init__(address, Handler)
+
+    def get_request(self):
+        connection, address = super().get_request()
+        connection.settimeout(15)
+        return connection, address
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        logging.info('%s %s', self.address_string(), fmt % args)
+
+    def respond(self, status, body, content_type='application/json; charset=utf-8', extra=None):
+        raw = json.dumps(body, ensure_ascii=False).encode() if content_type.startswith('application/json') else body
+        self.send_response(status)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(raw)))
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def authorized(self):
+        config = self.server.config
+        if not config.password:
+            return True
+        expected = 'Basic ' + base64.b64encode((config.username+':'+config.password).encode()).decode()
+        if hmac.compare_digest(self.headers.get('Authorization','').encode(), expected.encode()):
+            return True
+        self.respond(401, {'error':'Anmeldung erforderlich.'}, extra={'WWW-Authenticate':'Basic realm="LANytic", charset="UTF-8"'})
+        return False
+
+    def do_GET(self):
+        path = urlsplit(self.path).path
+        if path == '/healthz':
+            self.respond(200, {'status':'ok'})
+            return
+        if not self.authorized():
+            return
+        if path == '/api/state':
+            scanner = self.server.scanner
+            self.respond(200, {'devices':self.server.store.devices(), 'scans':self.server.store.scan_history(),
+                'config':{'demo':self.server.config.demo,'interfaces':['demo0'] if self.server.config.demo else self.server.config.interfaces,
+                          'interval':self.server.config.interval},
+                'scanning':scanner.lock.locked(), 'next_scan':scanner.next_scan})
+        elif path in ('/', '/app.js', '/style.css', '/favicon.svg'):
+            file = ROOT / 'static' / ('index.html' if path == '/' else path[1:])
+            mime = {'/':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/favicon.svg':'image/svg+xml'}[path]
+            self.respond(200, file.read_bytes(), mime)
+        else:
+            self.respond(404, {'error':'Nicht gefunden.'})
+
+    def mutate(self):
+        if not self.authorized():
+            return
+        origin = self.headers.get('Origin')
+        if (origin and urlsplit(origin).netloc != self.headers.get('Host')) or self.headers.get('Sec-Fetch-Site') == 'cross-site':
+            self.respond(403, {'error':'Anfrage von fremder Website abgelehnt.'})
+            return
+        if self.headers.get('Content-Type','').split(';')[0] != 'application/json':
+            self.respond(415, {'error':'Content-Type application/json erforderlich.'})
+            return
+        try:
+            size = int(self.headers.get('Content-Length','0'))
+            if not 0 < size <= 16384:
+                raise ValueError('Ungültige Anfragegröße.')
+            changes = json.loads(self.rfile.read(size))
+            if not isinstance(changes, dict):
+                raise ValueError('JSON-Objekt erforderlich.')
+            path = urlsplit(self.path).path
+            if self.command == 'POST' and path == '/api/scan':
+                if self.server.scanner.trigger():
+                    self.respond(202, {'status':'started'})
+                else:
+                    self.respond(409, {'error':'Ein Scan läuft bereits.'})
+            elif self.command == 'PATCH' and re.fullmatch(r'/api/devices/[0-9]+',path):
+                self.server.store.update(int(path.rsplit('/',1)[1]), changes)
+                self.respond(200, {'status':'saved'})
+            else:
+                self.respond(404, {'error':'Nicht gefunden.'})
+        except (ValueError, UnicodeDecodeError) as exc:
+            self.respond(400, {'error':str(exc)})
+        except KeyError:
+            self.respond(404, {'error':'Gerät nicht gefunden.'})
+
+    do_POST = mutate
+    do_PATCH = mutate
+
+def main():
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    config = Config()
+    store = Store(config.db)
+    if config.demo:
+        store.seed_demo()
+    scanner = Scanner(config, store)
+    server = AppServer((config.host,config.port),config,store,scanner)
+    scanner.schedule()
+    def shutdown(*_):
+        scanner.stop.set()
+        threading.Thread(target=server.shutdown,daemon=True).start()
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
+    logging.info('LANytic läuft auf http://%s:%s (%s)', config.host, config.port, 'DEMO' if config.demo else 'LIVE')
+    try:
+        server.serve_forever()
+    finally:
+        scanner.stop.set()
+        server.server_close()
+        if scanner.thread:
+            scanner.thread.join(timeout=config.timeout * max(1,len(config.interfaces)) + 2)
+
+if __name__ == '__main__':
+    main()

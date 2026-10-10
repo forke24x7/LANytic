@@ -1,0 +1,36 @@
+services:
+  lanytic:
+    build: .
+    image: lanytic:local
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${PORT:-8840}
+      IFACES: ${IFACES:?Setze IFACES in der .env auf dein LAN-Interface}
+      SCAN_INTERVAL: ${SCAN_INTERVAL:-120}
+      SCAN_TIMEOUT: ${SCAN_TIMEOUT:-60}
+      DB_PATH: /data/lan.sqlite3
+      TZ: ${TZ:-Europe/Berlin}
+      AUTH_USER: ${AUTH_USER:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:?Setze ein eigenes AUTH_PASSWORD in der .env}
+    volumes:
+      - lanytic-data:/data
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    stop_grace_period: 3m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+volumes:
+  lanytic-data:
