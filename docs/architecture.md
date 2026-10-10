@@ -11,6 +11,7 @@ Manual trigger or scheduler → bounded `arp-scan` subprocess per interface → 
 - Python standard library: no pip, npm, or build step.
 - SQLite/WAL: each request uses its own connection. Scan upserts never overwrite custom metadata.
 - Scan mutex: at most one scan at a time. Scheduling restarts the interval after a run completes.
+- Local host: `ip -j -4 address show dev <interface>` supplies the interface MAC and primary IPv4 address, merged with ARP responses by MAC.
 - Atomic results: all configured interfaces must succeed; failure leaves device states intact.
 - Stable identity: MAC + interface; IP is a changing observation.
 - No shell execution: scanner arguments are passed as a list and interface names are validated. API clients cannot submit arbitrary scan commands.

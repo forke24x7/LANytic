@@ -51,6 +51,23 @@ def parse_arp(output, interface):
                             vendor=fields[2].strip() if len(fields) == 3 else '')
     return list(devices.values())
 
+def local_device(interface):
+    result = subprocess.run(['ip', '-j', '-4', 'address', 'show', 'dev', interface],
+                            capture_output=True, text=True, timeout=10, check=False)
+    if result.returncode:
+        raise RuntimeError('Reading host address on %s failed: %s' % (interface, result.stderr.strip()[:500]))
+    for link in json.loads(result.stdout):
+        mac = link.get('address', '').lower()
+        if not re.fullmatch(r'(?:[0-9a-f]{2}:){5}[0-9a-f]{2}', mac) or mac == '00:00:00:00:00:00':
+            continue
+        addresses = [a for a in link.get('addr_info', []) if a.get('family') == 'inet']
+        addresses.sort(key=lambda a: bool(a.get('secondary', False)))
+        for address in addresses:
+            ip = ipaddress.IPv4Address(address['local'])
+            if not ip.is_loopback and not ip.is_unspecified:
+                return dict(ip=str(ip), mac=mac, interface=interface, vendor='')
+    return None
+
 class Store:
     def __init__(self, path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -154,12 +171,16 @@ class Scanner:
                                         capture_output=True, text=True, timeout=self.config.timeout, check=False)
                 if result.returncode:
                     raise RuntimeError('Scan on %s failed: %s' % (interface, result.stderr.strip()[:500]))
-                observations.extend(parse_arp(result.stdout, interface))
+                devices = {d['mac']: d for d in parse_arp(result.stdout, interface)}
+                host = local_device(interface)
+                if host:
+                    devices[host['mac']] = host
+                observations.extend(devices.values())
             self.store.apply_scan(observations, interfaces, scan_id)
         except Exception as exc:
             message = str(exc)
             if isinstance(exc, FileNotFoundError):
-                message = 'arp-scan is missing. Use the Docker image or install arp-scan on the host.'
+                message = 'A scanner dependency is missing. Use the Docker image or install arp-scan and iproute2 on the host.'
             logging.error('Scan failed: %s', message)
             if scan_id is not None:
                 with self.store.connect() as db:

@@ -9,12 +9,15 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from app import AppServer, Config, Scanner, Store, parse_arp
+from app import AppServer, Config, Scanner, Store, local_device, parse_arp
 
 ARP = '192.168.1.2\taa:bb:cc:dd:ee:ff\tVendor Name\n'
 
 class StoreTests(unittest.TestCase):
     def setUp(self):
+        host_patch = patch('app.local_device', return_value=None)
+        host_patch.start()
+        self.addCleanup(host_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.store = Store(str(Path(self.temp.name) / 'lan.sqlite3'))
         with patch.dict(os.environ, {'IFACES':'eth0'}, clear=True):
@@ -98,13 +101,51 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(len(self.store.devices()),2)
         self.assertTrue(all(d['online'] for d in self.store.devices()))
 
+    def test_host_is_included_once_and_metadata_survives(self):
+        host = dict(ip='172.20.20.7', mac='02:11:22:33:44:55', interface='eth0', vendor='')
+        with patch('app.local_device', return_value=host):
+            self.scan('')
+            device = self.store.devices()[0]
+            self.store.update(device['id'], {'known': True, 'name': 'Docker host'})
+            host['ip'] = '172.20.20.8'
+            self.scan('172.20.20.7 02:11:22:33:44:55 Vendor')
+        devices = self.store.devices()
+        self.assertEqual(len(devices), 1)
+        self.assertEqual(devices[0]['id'], device['id'])
+        self.assertEqual(devices[0]['ip'], '172.20.20.8')
+        self.assertTrue(devices[0]['online'])
+        self.assertTrue(devices[0]['known'])
+        self.assertEqual(devices[0]['name'], 'Docker host')
+        self.assertEqual(self.store.scan_history()[0]['found'], 1)
+
     def test_restart_marks_interrupted_scan_as_error(self):
         with self.store.connect() as db:
             db.execute("INSERT INTO scans (started_at,status) VALUES ('2026-01-01','running')")
         self.assertEqual(Store(self.store.path).scan_history()[0]['status'],'error')
 
+class LocalDeviceTests(unittest.TestCase):
+    def test_reads_primary_ipv4_and_mac_from_configured_interface(self):
+        output = json.dumps([{'address': '02:AA:BB:CC:DD:EE', 'addr_info': [
+            {'family': 'inet', 'local': '172.20.20.9', 'secondary': True},
+            {'family': 'inet', 'local': '172.20.20.7'}]}])
+        with patch('app.subprocess.run', return_value=subprocess.CompletedProcess([], 0, output, '')) as run:
+            self.assertEqual(local_device('br0'), dict(ip='172.20.20.7', mac='02:aa:bb:cc:dd:ee', interface='br0', vendor=''))
+        self.assertEqual(run.call_args.args[0], ['ip', '-j', '-4', 'address', 'show', 'dev', 'br0'])
+
+    def test_missing_ipv4_loopback_and_query_failure(self):
+        for link in [{'address': '02:11:22:33:44:55', 'addr_info': []},
+                     {'address': '00:00:00:00:00:00', 'addr_info': [{'family': 'inet', 'local': '127.0.0.1'}]}]:
+            with patch('app.subprocess.run', return_value=subprocess.CompletedProcess([], 0, json.dumps([link]), '')):
+                self.assertIsNone(local_device('eth0'))
+        with patch('app.subprocess.run', return_value=subprocess.CompletedProcess([], 1, '', 'No such device')):
+            with self.assertRaisesRegex(RuntimeError, 'Reading host address'):
+                local_device('eth0')
+
 class ApiTests(unittest.TestCase):
     def setUp(self):
+        host_patch = patch('app.local_device', return_value=None)
+        host_patch.start()
+        self.addCleanup(host_patch.stop)
         self.temp=tempfile.TemporaryDirectory()
         with patch.dict(os.environ,{'IFACES':'eth0'},clear=True):self.config=Config()
         self.store=Store(str(Path(self.temp.name)/'test.sqlite3'))

@@ -37,6 +37,7 @@ jobs:
               raise SystemExit('Container failed to start')
           PY
           docker exec lanytic-smoke arp-scan --version
+          docker exec lanytic-smoke python -c "from app import local_device; device = local_device('eth0'); assert device and device['interface'] == 'eth0', device"
       - name: Compose configuration
         env:
           IFACES: eth0

@@ -119,7 +119,9 @@ Identity is `(MAC address, interface)`. IP changes do not overwrite your custom 
 
 ARP discovers the local IPv4 broadcast segment, not routed subnets or IPv6 devices. VLANs need corresponding host interfaces. This version has no port scanning, DNS name lookup, or notifications. Vendors come from the OUI database bundled with `arp-scan` and may be unknown.
 
-Online means a device responded during the last successful scan. No response means Offline, which may also reflect sleep mode or packet loss. If any interface fails or times out, the entire run is discarded and the previous device status is preserved. Removed interfaces keep their last observed status; the interface and last-seen time are visible in device details. Old devices are not automatically deleted.
+The Docker host is included using the IPv4 and MAC address of each configured interface. If an interface has multiple IPv4 addresses, its primary address is used; inventory identity remains MAC + interface. The host can be marked Known and given a name or description like any other device.
+
+Online means a device responded during the last successful scan or is the local scanning host. No response means Offline, which may also reflect sleep mode or packet loss. If any interface fails or times out, the entire run is discarded and the previous device status is preserved. Removed interfaces keep their last observed status; the interface and last-seen time are visible in device details. Old devices are not automatically deleted.
 
 ## Development
 
