@@ -1,3 +1,4 @@
+# Build and run LANytic with host networking and persistent SQLite storage.
 services:
   lanytic:
     build: https://github.com/forke24x7/LANytic.git#main
