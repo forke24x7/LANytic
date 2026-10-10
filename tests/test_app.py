@@ -1,3 +1,4 @@
+"""Regression tests for discovery, device metadata, settings, and the HTTP API."""
 import json
 import os
 from pathlib import Path
