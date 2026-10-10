@@ -32,7 +32,7 @@ async function api(path,method='GET',body){
 function visibleDevices(){
   const q=$('search').value.toLocaleLowerCase(), status=$('status-filter').value;
   return state.devices.filter(d => (filter==='all'||(filter==='known'?d.known:!d.known)) && (status==='all'||(status==='online'?d.online:!d.online)) && [d.name,d.description,d.ip,d.mac,d.vendor,d.interface].some(v=>v.toLocaleLowerCase().includes(q)))
-    .sort((a,b)=>{let n=sort==='ip' ? a.ip.split('.').reduce((n,v)=>n*256+Number(v),0)-b.ip.split('.').reduce((n,v)=>n*256+Number(v),0) : (a.name||a.vendor||a.mac).localeCompare(b.name||b.vendor||b.mac,'en');return descending?-n:n;});
+    .sort((a,b)=>{let n=sort==='ip' ? a.ip.split('.').reduce((n,v)=>n*256+Number(v),0)-b.ip.split('.').reduce((n,v)=>n*256+Number(v),0) : sort==='last_seen' ? Date.parse(a.last_seen)-Date.parse(b.last_seen) : (a.name||a.vendor||a.mac).localeCompare(b.name||b.vendor||b.mac,'en');return descending?-n:n;});
 }
 function deviceIcon(d){const text=(d.name+' '+d.vendor).toLowerCase();if(/router|fritz|access point|ubiquiti/.test(text))return 'router';if(/nas|diskstation|synology|assistant|raspberry/.test(text))return 'server';if(/iphone|phone/.test(text))return 'phone';return 'devices';}
 function renderDevices(){
@@ -112,7 +112,7 @@ for(const id of ['scan-button','history-scan'])$(id).addEventListener('click',sc
 document.querySelectorAll('[data-page]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.page').forEach(p=>p.hidden=p.id!==`page-${b.dataset.page}`);document.querySelectorAll('[data-page]').forEach(n=>n.classList.toggle('active',n===b));$('page-label').textContent=({devices:'Devices',scans:'Scan history',settings:'Settings'})[b.dataset.page];}));
 document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(t=>t.classList.toggle('active',t===b));renderDevices();}));
 $('search').addEventListener('input',renderDevices);$('status-filter').addEventListener('change',renderDevices);
-for(const field of ['name','ip'])$('sort-'+field).addEventListener('click',()=>{descending=sort===field?!descending:false;sort=field;renderDevices();});
+for(const field of ['name','ip','last_seen'])$('sort-'+field).addEventListener('click',()=>{descending=sort===field?!descending:false;sort=field;renderDevices();});
 $('export-button').addEventListener('click',()=>{
   if(!state)return;
   const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"';
