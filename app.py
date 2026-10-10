@@ -52,7 +52,7 @@ def parse_arp(output, interface):
     return list(devices.values())
 
 def local_device(interface):
-    result = subprocess.run(['ip', '-j', '-4', 'address', 'show', 'dev', interface],
+    result = subprocess.run(['ip', '-j', 'address', 'show', 'dev', interface],
                             capture_output=True, text=True, timeout=10, check=False)
     if result.returncode:
         raise RuntimeError('Reading host address on %s failed: %s' % (interface, result.stderr.strip()[:500]))

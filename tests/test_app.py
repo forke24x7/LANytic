@@ -130,7 +130,7 @@ class LocalDeviceTests(unittest.TestCase):
             {'family': 'inet', 'local': '172.20.20.7'}]}])
         with patch('app.subprocess.run', return_value=subprocess.CompletedProcess([], 0, output, '')) as run:
             self.assertEqual(local_device('br0'), dict(ip='172.20.20.7', mac='02:aa:bb:cc:dd:ee', interface='br0', vendor=''))
-        self.assertEqual(run.call_args.args[0], ['ip', '-j', '-4', 'address', 'show', 'dev', 'br0'])
+        self.assertEqual(run.call_args.args[0], ['ip', '-j', 'address', 'show', 'dev', 'br0'])
 
     def test_missing_ipv4_loopback_and_query_failure(self):
         for link in [{'address': '02:11:22:33:44:55', 'addr_info': []},
