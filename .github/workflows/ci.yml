@@ -1,3 +1,4 @@
+# Validate the API, Docker builds, and persistent container settings.
 name: Test and Docker build
 on:
   push:
