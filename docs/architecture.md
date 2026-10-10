@@ -2,6 +2,8 @@
 
 LANytic invokes `arp-scan` per host interface and parses IP addresses, MAC addresses, and vendors from its output. Device information is stored in SQLite. The Docker image includes the scanner and uses host networking to access the LAN.
 
+The HTTP API serves the local web interface, device inventory, scan history, and persistent scanner settings.
+
 ## LANytic architecture
 
 Browser → Python HTTP API → SQLite
