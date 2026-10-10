@@ -19,7 +19,7 @@ jobs:
         run: docker compose -p lanytic-ci build lanytic
       - name: Container smoke test
         run: |
-          docker run -d --name lanytic-smoke --cap-drop ALL --read-only --tmpfs /tmp --tmpfs /data -e DB_PATH=/data/lan.sqlite3 -p 127.0.0.1:8841:8840 lanytic-ci-lanytic
+          docker run -d --name lanytic-smoke --cap-drop ALL --read-only --tmpfs /tmp -v lanytic-smoke-data:/data -e DB_PATH=/data/lan.sqlite3 -p 127.0.0.1:8841:8840 lanytic-ci-lanytic
           python - <<'PY'
           import json, time, urllib.request
           for attempt in range(30):
