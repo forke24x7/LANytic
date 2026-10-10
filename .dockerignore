@@ -1,3 +1,4 @@
+# Keep local data, credentials, and development files out of Docker builds.
 .git
 .env
 .env.*
