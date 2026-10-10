@@ -21,10 +21,50 @@ Requirements: Docker Engine with Compose v2 and a host LAN interface.
 git clone https://github.com/forke24x7/LANytic.git
 cd LANytic
 cp .env.example .env
-ip -br link
 ```
 
-Edit `.env`: set `IFACES` to your actual interface and choose your own `AUTH_PASSWORD`. Multiple interfaces are space-separated, e.g. `IFACES=eth0 eth0.20`.
+### Find your LAN interface
+
+Run this on the **Linux Docker host**, not inside the container:
+
+```sh
+ip -br -4 addr
+```
+
+Choose the interface with the IPv4 address of the LAN you want to scan. For example:
+
+```text
+enp3s0           UP             192.168.178.10/24
+```
+
+In this example, set `IFACES=enp3s0`. Interface names vary, e.g. `eth0`, `eno1`, or `br0` when the host uses a LAN bridge. Do not choose `lo` or `docker0` for scanning your physical LAN.
+
+To see which interface the host uses for its default route:
+
+```sh
+ip -4 route show default
+```
+
+The name following `dev` is the interface. If the default route uses a VPN or a different network, choose the LAN interface from the address list instead.
+
+### Sample `.env`
+
+Save this as `.env` next to `docker-compose.yml`. Replace `enp3s0` with your interface and set your own password before starting:
+
+```dotenv
+IFACES=enp3s0
+PORT=8840
+HOST=0.0.0.0
+SCAN_INTERVAL=120
+SCAN_TIMEOUT=60
+TZ=Europe/Berlin
+AUTH_USER=admin
+AUTH_PASSWORD='replace-with-a-long-unique-password'
+```
+
+Multiple interfaces are space-separated, e.g. `IFACES=enp3s0 enp3s0.20`. Host networking lets the container scan these host interfaces directly.
+
+### Start LANytic
 
 ```sh
 docker compose up -d --build
