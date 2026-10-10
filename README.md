@@ -1,6 +1,6 @@
 # LANytic
 
-A clean, self-hosted view of your LAN. Discover devices with ARP, mark them as **Known**, and add your own names and descriptions. An independent implementation, not a WatchYourLAN fork.
+A clean, self-hosted view of your LAN. Discover devices with ARP, mark them as **Known**, and add your own names and descriptions.
 
 ## Features
 
