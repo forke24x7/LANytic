@@ -132,3 +132,8 @@ Tests cover parsing, IP changes, persistent metadata, failures/timeouts, concurr
 API: `GET /api/state`, `POST /api/scan` with `{}`, `PATCH /api/devices/<id>` with `known`, `name`, and/or `description`. Writes require `Content-Type: application/json`. `GET /healthz` checks the HTTP service; inspect scan history for scanner health.
 
 See [docs/architecture.md](docs/architecture.md) for the technical background.
+
+## License
+
+Licensed under the [MIT License](LICENSE). Free to use, modify, and redistribute,
+including commercially, provided the copyright and license notices are retained.
