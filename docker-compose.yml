@@ -1,7 +1,7 @@
 services:
   lanytic:
-    build: .
-    image: lanytic:local
+    build: https://github.com/forke24x7/LANytic.git#main
+    pull_policy: build
     restart: unless-stopped
     network_mode: host
     environment:

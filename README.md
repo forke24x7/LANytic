@@ -22,11 +22,13 @@ been hardened for direct exposure to the public internet.
 
 ## Docker Compose on Linux
 
-Requirements: Docker Engine with Compose v2 and a host LAN interface.
+Requirements: Docker Engine with Compose v2, a host LAN interface, and internet access for the build. Only the Compose file and `.env` are needed on the host; Docker fetches the source and Dockerfile from the public Git repository.
 
 ```sh
-git clone https://github.com/forke24x7/LANytic.git
-cd LANytic
+mkdir -p lanytic
+cd lanytic
+curl -fsSL https://raw.githubusercontent.com/forke24x7/LANytic/main/docker-compose.yml -o docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/forke24x7/LANytic/main/.env.example -o .env.example
 cp .env.example .env
 ```
 
@@ -73,6 +75,8 @@ Multiple interfaces are space-separated, e.g. `IFACES=enp3s0 enp3s0.20`. Host ne
 
 ### Start LANytic
 
+Compose builds LANytic from the `main` branch. `pull_policy: build` prevents a pull of an unpublished application image. No Docker registry login is required. If your deployment manager only pulls images, enable its build option or run the following command on the Docker host.
+
 ```sh
 docker compose up -d --build
 docker compose logs -f
@@ -105,7 +109,7 @@ Database/API timestamps use UTC. The English UI formats timestamps in your brows
 ## Operation
 
 ```sh
-git pull
+curl -fsSL https://raw.githubusercontent.com/forke24x7/LANytic/main/docker-compose.yml -o docker-compose.yml
 docker compose up -d --build
 docker compose ps
 docker compose logs --tail=100
@@ -122,6 +126,8 @@ ARP discovers the local IPv4 broadcast segment, not routed subnets or IPv6 devic
 Online means a device responded during the last successful scan. No response means Offline, which may also reflect sleep mode or packet loss. If any interface fails or times out, the entire run is discarded and the previous device status is preserved. Removed interfaces keep their last observed status; the interface and last-seen time are visible in device details. Old devices are not automatically deleted.
 
 ## Development
+
+For local source changes, build with `docker build -t lanytic:dev .`; the deployment Compose file always uses the Git repository as its build context.
 
 ```sh
 python3 -m unittest discover -s tests -v
