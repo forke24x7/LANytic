@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LANytic: independent LAN inventory; Python standard library only."""
+"""LANytic HTTP API, ARP discovery, and persistent SQLite device inventory."""
 import ipaddress
 import json
 import logging
