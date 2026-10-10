@@ -12,7 +12,7 @@ been hardened for direct exposure to the public internet.
 ## Features
 
 - Automatic and manual IPv4 ARP scans across one or more host interfaces.
-- Persistent inventory with online/offline status, IP, MAC, vendor, and a Last seen timestamp in your local timezone.
+- Persistent inventory with online/offline status, IP, MAC, vendor, and a Last seen timestamp in your configured timezone.
 - Known status, custom names, and descriptions that survive IP changes.
 - Search, Known/status filters, sorting, and filtered CSV export.
 - Scan history with the latest 100 runs and explicit error details.
@@ -22,7 +22,7 @@ been hardened for direct exposure to the public internet.
 
 ## Docker Compose on Linux
 
-Requirements: Docker Engine with Compose v2, a host LAN interface, and internet access for the build. Only the Compose file and `.env` are needed on the host; Docker fetches the source and Dockerfile from the public Git repository.
+Requirements: Docker Engine with Compose v2, a host LAN interface, and internet access for the build. Only the Compose file is required on the host; Docker fetches the source and Dockerfile from the public Git repository.
 
 ```sh
 mkdir -p lanytic
@@ -46,7 +46,7 @@ Choose the interface with the IPv4 address of the LAN you want to scan. For exam
 enp3s0           UP             192.168.178.10/24
 ```
 
-In this example, set `IFACES=enp3s0`. Interface names vary, e.g. `eth0`, `eno1`, or `br0` when the host uses a LAN bridge. Do not choose `lo` or `docker0` for scanning your physical LAN.
+In this example, enter `enp3s0` under **Settings → LAN interfaces**. Interface names vary, e.g. `eth0`, `eno1`, or `br0` when the host uses a LAN bridge. Do not choose `lo` or `docker0` for scanning your physical LAN.
 
 To see which interface the host uses for its default route:
 
@@ -58,18 +58,14 @@ The name following `dev` is the interface. If the default route uses a VPN or a 
 
 ### Sample `.env`
 
-Save this as `.env` next to `docker-compose.yml`. Replace `enp3s0` with your interface:
+The optional `.env` next to `docker-compose.yml` only controls the HTTP listener:
 
 ```dotenv
-IFACES=enp3s0
 PORT=8840
 HOST=0.0.0.0
-SCAN_INTERVAL=120
-SCAN_TIMEOUT=60
-TZ=Europe/Berlin
 ```
 
-Multiple interfaces are space-separated, e.g. `IFACES=enp3s0 enp3s0.20`. Host networking lets the container scan these host interfaces directly.
+Configure LAN interfaces, scan interval, timeout, and timezone in the web interface under **Settings**. Multiple interfaces are space-separated, e.g. `enp3s0 enp3s0.20`. Host networking lets the container scan these host interfaces directly.
 
 ### Start LANytic
 
@@ -80,7 +76,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-Open `http://SERVER-IP:8840`. The first scan starts automatically, then repeats every 120 seconds by default. `.env` and database files are excluded from Git.
+Open `http://SERVER-IP:8840`. On first start, the interface loads without a configured LAN interface. Open **Settings**, enter your LAN interface, and save. The first scan then starts automatically, repeating every 600 seconds (10 minutes) by default. Leave interfaces empty to pause scans. `.env` and database files are excluded from Git.
 
 The live setup uses **Linux host networking**, with no `ports:` mapping; `PORT` controls the port on the host. Docker Desktop on macOS/Windows does not provide equivalent ARP access to the physical LAN.
 
@@ -90,17 +86,24 @@ LANytic has no built-in authentication. Run it on your trusted LAN or behind an 
 
 ## Configuration
 
+Scanner settings are saved in SQLite in the persistent data volume and take effect immediately. Wait for a running scan to finish before saving changes.
+
+| Setting | Default | Purpose |
+|---|---|---|
+| LAN interfaces | empty | Space-separated Linux host interfaces; scanning stays paused until configured |
+| Scan interval | `600` | Seconds after scan completion, minimum 10 |
+| Scan timeout | `60` | Timeout per interface, 1–600 seconds |
+| Timezone | `Europe/Berlin` | IANA timezone for displayed timestamps and application logs |
+
+HTTP and storage environment variables:
+
 | Variable | Default | Purpose |
 |---|---|---|
-| `IFACES` | empty | Space-separated host interfaces; required for live scans |
-| `SCAN_INTERVAL` | `120` | Seconds after scan completion, minimum 10 |
-| `SCAN_TIMEOUT` | `60` | Timeout per interface, 1–600 seconds |
 | `PORT` | `8840` | HTTP port |
 | `HOST` | `127.0.0.1` natively, `0.0.0.0` in Docker | Bind address |
 | `DB_PATH` | `data/lan.sqlite3` natively, `/data/lan.sqlite3` in Docker | SQLite path |
-| `TZ` | `Europe/Berlin` in Compose | Container log timezone |
 
-Database/API timestamps use UTC. The English UI formats timestamps in your browser's local timezone. Container configuration changes take effect after `docker compose up -d`.
+Database/API timestamps remain UTC; the interface displays them in the saved timezone. After updating from an older version, remove `IFACES`, `SCAN_INTERVAL`, `SCAN_TIMEOUT`, and `TZ` from your `.env` and Compose environment, then configure them in Settings. Existing device data is preserved. Listener configuration changes require `docker compose up -d`.
 
 ## Operation
 
@@ -133,7 +136,7 @@ python3 -m unittest discover -s tests -v
 
 Tests cover parsing, IP changes, persistent metadata, failures/timeouts, concurrent scan requests, unauthenticated API access, input validation, and CSRF protection. GitHub Actions also builds the Docker image, starts the application container, and validates the Compose configuration.
 
-API: `GET /api/state`, `POST /api/scan` with `{}`, `PATCH /api/devices/<id>` with `known`, `name`, and/or `description`. Writes require `Content-Type: application/json`. `GET /healthz` checks the HTTP service; inspect scan history for scanner health.
+API: `PATCH /api/settings` with `interfaces` (array), `interval`, `timeout`, and `timezone`; `GET /api/state`, `POST /api/scan` with `{}`, `PATCH /api/devices/<id>` with `known`, `name`, and/or `description`. Writes require `Content-Type: application/json`. `GET /healthz` checks the HTTP service; inspect scan history for scanner health.
 
 See [docs/architecture.md](docs/architecture.md) for the technical background.
 

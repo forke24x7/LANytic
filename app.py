@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 ROOT = Path(__file__).resolve().parent
 
@@ -25,14 +26,45 @@ class Config:
     def __init__(self):
         self.host = os.getenv('HOST', '127.0.0.1')
         self.port = int(os.getenv('PORT', '8840'))
-        self.interfaces = list(dict.fromkeys(os.getenv('IFACES', '').split()))
-        if any(not re.fullmatch(r'[a-zA-Z0-9_.:-]{1,32}', i) for i in self.interfaces):
-            raise ValueError('IFACES contains an invalid interface name.')
-        self.interval = int(os.getenv('SCAN_INTERVAL', '120'))
-        self.timeout = int(os.getenv('SCAN_TIMEOUT', '60'))
-        if self.interval < 10 or not 1 <= self.timeout <= 600:
-            raise ValueError('SCAN_INTERVAL must be >= 10 and SCAN_TIMEOUT between 1 and 600.')
+        self.interfaces = []
+        self.interval = 600
+        self.timeout = 60
+        self.timezone = 'Europe/Berlin'
         self.db = os.getenv('DB_PATH', str(ROOT / 'data' / 'lan.sqlite3'))
+
+    def settings(self):
+        return dict(interfaces=list(self.interfaces), interval=self.interval,
+                    timeout=self.timeout, timezone=self.timezone)
+
+    @staticmethod
+    def validate(settings):
+        if set(settings) != {'interfaces', 'interval', 'timeout', 'timezone'}:
+            raise ValueError('Required settings: interfaces, interval, timeout, timezone.')
+        interfaces = settings['interfaces']
+        if (not isinstance(interfaces, list) or len(interfaces) > 32 or
+                any(not isinstance(i, str) or not re.fullmatch(r'[a-zA-Z0-9_.:-]{1,32}', i) for i in interfaces)):
+            raise ValueError('Enter valid interface names, separated by spaces (maximum 32).')
+        if type(settings['interval']) is not int or not 10 <= settings['interval'] <= 2147483647:
+            raise ValueError('Scan interval must be an integer between 10 and 2147483647 seconds.')
+        if type(settings['timeout']) is not int or not 1 <= settings['timeout'] <= 600:
+            raise ValueError('Scan timeout must be an integer between 1 and 600 seconds.')
+        tz = settings['timezone']
+        if not isinstance(tz, str) or len(tz) > 128:
+            raise ValueError('Enter a valid IANA timezone, e.g. Europe/Berlin.')
+        try:
+            ZoneInfo(tz)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError('Enter a valid IANA timezone, e.g. Europe/Berlin.') from None
+        return dict(settings, interfaces=list(dict.fromkeys(interfaces)))
+
+    def apply(self, settings):
+        self.interfaces = settings['interfaces']
+        self.interval = settings['interval']
+        self.timeout = settings['timeout']
+        self.timezone = settings['timezone']
+        os.environ['TZ'] = self.timezone
+        if hasattr(time, 'tzset'):
+            time.tzset()
 
 def parse_arp(output, interface):
     devices = {}
@@ -75,6 +107,7 @@ class Store:
         with self.connect() as db:
             db.executescript('''
                 PRAGMA journal_mode=WAL;
+                CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS devices (
                     id INTEGER PRIMARY KEY, mac TEXT NOT NULL, interface TEXT NOT NULL,
                     ip TEXT NOT NULL, vendor TEXT NOT NULL DEFAULT '',
@@ -97,6 +130,16 @@ class Store:
                 yield db
         finally:
             db.close()
+
+    def load_settings(self):
+        with self.connect() as db:
+            row = db.execute('SELECT value FROM settings WHERE id=1').fetchone()
+            return json.loads(row['value']) if row else None
+
+    def save_settings(self, settings):
+        with self.connect() as db:
+            db.execute('INSERT INTO settings (id,value) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value',
+                       (json.dumps(settings),))
 
     def devices(self):
         with self.connect() as db:
@@ -141,14 +184,33 @@ class Store:
 class Scanner:
     def __init__(self, config, store):
         self.config, self.store = config, store
+        saved = store.load_settings()
+        config.apply(Config.validate(saved) if saved is not None else config.settings())
         self.lock = threading.Lock()
         self.stop = threading.Event()
         self.next_scan = None
         self.thread = None
 
+    def configure(self, settings):
+        settings = Config.validate(settings)
+        if not self.lock.acquire(blocking=False):
+            return False
+        try:
+            previous_interfaces = self.config.interfaces
+            self.store.save_settings(settings)
+            self.config.apply(settings)
+            self.next_scan = ((time.time() if previous_interfaces != self.config.interfaces else time.time() + self.config.interval)
+                              if self.config.interfaces else None)
+        finally:
+            self.lock.release()
+        return True
+
     def trigger(self):
         if not self.lock.acquire(blocking=False):
             return False
+        if not self.config.interfaces:
+            self.lock.release()
+            raise ValueError('Configure a LAN interface in Settings before scanning.')
         try:
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
@@ -164,7 +226,7 @@ class Scanner:
                 scan_id = db.execute("INSERT INTO scans (started_at,status) VALUES (?,'running')", (now(),)).lastrowid
             interfaces = self.config.interfaces
             if not interfaces:
-                raise RuntimeError('No interface configured. Set IFACES, e.g. eth0 or enp3s0.')
+                raise RuntimeError('Configure a LAN interface in Settings before scanning.')
             observations = []
             for interface in interfaces:
                 result = subprocess.run(['arp-scan', '--localnet', '--interface='+interface, '--retry=2', '--plain', '--ignoredups'],
@@ -187,15 +249,19 @@ class Scanner:
                     db.execute("UPDATE scans SET status='error',finished_at=?,error=? WHERE id=?", (now(), message, scan_id))
                     db.execute('DELETE FROM scans WHERE id NOT IN (SELECT id FROM scans ORDER BY id DESC LIMIT 100)')
         finally:
-            self.next_scan = time.time() + self.config.interval
+            self.next_scan = time.time() + self.config.interval if self.config.interfaces else None
             self.lock.release()
 
     def schedule(self):
-        self.next_scan = time.time()
+        self.next_scan = time.time() if self.config.interfaces else None
         def loop():
             while not self.stop.wait(1):
-                if not self.lock.locked() and time.time() >= self.next_scan:
-                    self.trigger()
+                next_scan = self.next_scan
+                if not self.lock.locked() and next_scan is not None and time.time() >= next_scan:
+                    try:
+                        self.trigger()
+                    except ValueError:
+                        pass
         threading.Thread(target=loop, daemon=True).start()
 
 class AppServer(ThreadingHTTPServer):
@@ -235,8 +301,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/state':
             scanner = self.server.scanner
             self.respond(200, {'devices':self.server.store.devices(), 'scans':self.server.store.scan_history(),
-                'config':{'interfaces':self.server.config.interfaces,
-                          'interval':self.server.config.interval},
+                'config':self.server.config.settings(),
                 'scanning':scanner.lock.locked(), 'next_scan':scanner.next_scan})
         elif path in ('/', '/app.js', '/style.css', '/favicon.svg', '/theme.js'):
             file = ROOT / 'static' / ('index.html' if path == '/' else path[1:])
@@ -266,6 +331,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.respond(202, {'status':'started'})
                 else:
                     self.respond(409, {'error':'A scan is already running.'})
+            elif self.command == 'PATCH' and path == '/api/settings':
+                if self.server.scanner.configure(changes):
+                    self.respond(200, {'status':'saved'})
+                else:
+                    self.respond(409, {'error':'Wait for the current scan to finish before changing settings.'})
             elif self.command == 'PATCH' and re.fullmatch(r'/api/devices/[0-9]+',path):
                 self.server.store.update(int(path.rsplit('/',1)[1]), changes)
                 self.respond(200, {'status':'saved'})

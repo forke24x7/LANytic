@@ -16,8 +16,6 @@ jobs:
       - name: Build checked-out source
         run: docker build -t lanytic:test .
       - name: Build from public Git context
-        env:
-          IFACES: eth0
         run: docker compose -p lanytic-ci build lanytic
       - name: Container smoke test
         run: |
@@ -30,17 +28,40 @@ jobs:
                       state = json.load(r)
                   assert state['devices'] == []
                   assert state['config']['interfaces'] == []
+                  assert state['config']['interval'] == 600
+                  assert state['scans'] == []
+                  assert state['next_scan'] is None
                   break
               except OSError:
                   time.sleep(1)
           else:
               raise SystemExit('Container failed to start')
           PY
+          python - <<'PY'
+          import json, urllib.request
+          settings = dict(interfaces=[], interval=900, timeout=30, timezone='UTC')
+          request = urllib.request.Request('http://127.0.0.1:8841/api/settings', data=json.dumps(settings).encode(), method='PATCH', headers={'Content-Type':'application/json'})
+          with urllib.request.urlopen(request) as r:
+              assert r.status == 200
+          PY
+          docker restart lanytic-smoke
+          python - <<'PY'
+          import json, time, urllib.request
+          for attempt in range(30):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:8841/api/state') as r:
+                      state = json.load(r)
+                  assert state['config'] == dict(interfaces=[], interval=900, timeout=30, timezone='UTC')
+                  assert state['scans'] == []
+                  break
+              except OSError:
+                  time.sleep(1)
+          else:
+              raise SystemExit('Settings did not survive container restart')
+          PY
           docker exec lanytic-smoke arp-scan --version
           docker exec lanytic-smoke python -c "from app import local_device; device = local_device('eth0'); assert device and device['interface'] == 'eth0', device"
       - name: Compose configuration
-        env:
-          IFACES: eth0
         run: |
           docker compose config --quiet
       - name: Container logs

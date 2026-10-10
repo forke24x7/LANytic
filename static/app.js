@@ -20,9 +20,9 @@ const icons = {
 const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.devices}</svg>`;
 document.querySelectorAll('[data-icon]').forEach(el => {el.innerHTML=icon(el.dataset.icon);});
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-let state=null, filter='all', sort='ip', descending=false, selectedId=null, requesting=false, scanRequested=false, toastTimer, renderedDevicesKey='';
-const date = value => value ? new Date(value).toLocaleString('en-GB',{dateStyle:'short',timeStyle:'short'}) : '–';
-const timestamp = value => value ? new Date(value).toLocaleString('en-GB',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}) : '–';
+let state=null, filter='all', sort='ip', descending=false, selectedId=null, requesting=false, scanRequested=false, toastTimer, renderedDevicesKey='', settingsDirty=false;
+const date = value => value ? new Date(value).toLocaleString('en-GB',{dateStyle:'short',timeStyle:'short',timeZone:state?.config.timezone}) : '–';
+const timestamp = value => value ? new Date(value).toLocaleString('en-GB',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:state?.config.timezone}) : '–';
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>{$('toast').hidden=true;},3500);}
 async function api(path,method='GET',body){
   const response = await fetch(path,{method,headers:body ? {'Content-Type':'application/json'} : {},body:body ? JSON.stringify(body) : undefined});
@@ -38,13 +38,13 @@ function deviceIcon(d){const text=(d.name+' '+d.vendor).toLowerCase();if(/router
 function renderDevices(){
   if(!state)return;
   const devices=visibleDevices();
-  const key=JSON.stringify({devices,total:state.devices.length});
+  const key=JSON.stringify({devices,total:state.devices.length,timezone:state.config.timezone});
   if(key===renderedDevicesKey)return;
   renderedDevicesKey=key;
   $('devices-body').innerHTML=devices.map(d=>`<tr><td><div class="device-cell"><span class="device-icon">${icon(deviceIcon(d))}</span><div><button class="device-title" data-detail="${d.id}">${escapeHtml(d.name || d.vendor || 'Unnamed device')}</button><div class="device-desc">${escapeHtml(d.description || (d.known ? d.vendor : 'Not identified yet'))}</div></div></div></td><td class="mono">${escapeHtml(d.ip)}</td><td class="mono mac">${escapeHtml(d.mac)}</td><td><span class="status ${d.online?'':'offline'}"><span class="dot green"></span>${d.online?'Online':'Offline'}</span></td><td class="mono"><time datetime="${escapeHtml(d.last_seen)}">${escapeHtml(timestamp(d.last_seen))}</time></td><td><button class="known-badge ${d.known?'':'unknown'}" data-known="${d.id}" aria-label="${d.known?'Remove Known status':'Mark as Known'}: ${escapeHtml(d.name||d.ip)}">${icon(d.known?'check':'unknown')}${d.known?'Known':'Unknown'}</button></td><td><button class="row-detail" data-detail="${d.id}" aria-label="Details for ${escapeHtml(d.name||d.ip)}">↗</button></td></tr>`).join('');
   $('empty-state').hidden=devices.length>0;
   $('empty-state').querySelector('h3').textContent=state.devices.length?'No matching devices':'No devices yet';
-  $('empty-state').querySelector('p').textContent=state.devices.length?'Try a different search or filter.':'Run a scan to discover your network.';
+  $('empty-state').querySelector('p').textContent=state.devices.length?'Try a different search or filter.':state.config.interfaces.length?'Run a scan to discover your network.':'Open Settings and choose your LAN interface to start scanning.';
   $('result-count').textContent=`${devices.length} of ${state.devices.length} devices`;
 }
 function render(){
@@ -54,13 +54,21 @@ function render(){
   $('mode').textContent='LIVE';
   const successful=state.scans.find(s=>s.status==='success'),latest=state.scans[0];
   $('last-scan').textContent=successful?`Last scan: ${date(successful.finished_at)}`:'No successful scans yet';
-  if(latest?.status==='error'){$('connection-error').hidden=false;$('connection-error').textContent='Scan failed: '+latest.error;}
+  if(state.config.interfaces.length && latest?.status==='error'){$('connection-error').hidden=false;$('connection-error').textContent='Scan failed: '+latest.error;}
   else $('connection-error').hidden=true;
-  for(const id of ['scan-button','history-scan']){const b=$(id);b.disabled=state.scanning||scanRequested;b.classList.toggle('scanning',state.scanning);b.innerHTML=icon('scan')+`<span>${state.scanning?'Scanning …':'Scan network'}</span>`;}
+  for(const id of ['scan-button','history-scan']){const b=$(id);b.disabled=state.scanning||scanRequested||!state.config.interfaces.length;b.classList.toggle('scanning',state.scanning);b.innerHTML=icon('scan')+`<span>${state.scanning?'Scanning …':'Scan network'}</span>`;}
+  $('setup-notice').hidden=state.config.interfaces.length>0;
+  if(!settingsDirty){
+    $('settings-interfaces').value=state.config.interfaces.join(' ');
+    $('settings-interval').value=state.config.interval;
+    $('settings-timeout').value=state.config.timeout;
+    $('settings-timezone').value=state.config.timezone;
+  }
+  $('settings-save').disabled=state.scanning;
   renderDevices();
   $('scans-body').innerHTML=state.scans.map(s=>`<tr><td>${date(s.started_at)}</td><td><span class="status ${s.status==='error'?'error':s.status==='running'?'offline':''}">${s.status==='success'?'Successful':s.status==='error'?'Failed':'Running …'}</span></td><td>${s.status==='success'?s.found:'–'}</td><td>${escapeHtml(s.error|| (s.finished_at?'Completed: '+date(s.finished_at):'Scan in progress'))}</td></tr>`).join('');
   $('no-scans').hidden=state.scans.length>0;
-  $('config-details').innerHTML=`<dt>Mode</dt><dd>${'ARP scan'}</dd><dt>Interfaces</dt><dd>${escapeHtml(state.config.interfaces.join(', ')||'Not configured')}</dd><dt>Scan interval</dt><dd>${state.config.interval} seconds</dd><dt>Storage</dt><dd>SQLite · Persistent data volume</dd><dt>Next scan</dt><dd>${state.scanning?'Scanning':state.next_scan?date(state.next_scan*1000):'–'}</dd>`;
+  $('config-details').innerHTML=`<dt>Mode</dt><dd>${'ARP scan'}</dd><dt>Interfaces</dt><dd>${escapeHtml(state.config.interfaces.join(', ')||'Not configured')}</dd><dt>Scan interval</dt><dd>${state.config.interval} seconds</dd><dt>Storage</dt><dd>SQLite · Persistent data volume</dd><dt>Next scan</dt><dd>${state.scanning?'Scanning':state.next_scan?date(state.next_scan*1000):'–'}</dd><dt>Timezone</dt><dd>${escapeHtml(state.config.timezone)}</dd>`;
 }
 async function refresh(){
   if(requesting)return;requesting=true;
@@ -85,6 +93,14 @@ $('devices-body').addEventListener('click',async e=>{
   const d=state.devices.find(d=>d.id===Number(button.dataset.known));button.disabled=true;
   try{await api(`/api/devices/${d.id}`,'PATCH',{known:!d.known});toast(d.known?'Known status removed.':'Device marked as Known.');await refresh();}catch(e){button.disabled=false;toast(e.message);}
 });
+$('settings-form').addEventListener('input',()=>{settingsDirty=true;});
+$('settings-form').addEventListener('submit',async e=>{
+  e.preventDefault();$('settings-save').disabled=true;$('settings-error').hidden=true;
+  const settings={interfaces:$('settings-interfaces').value.trim().split(/\s+/).filter(Boolean),interval:Number($('settings-interval').value),timeout:Number($('settings-timeout').value),timezone:$('settings-timezone').value.trim()};
+  try{await api('/api/settings','PATCH',settings);settingsDirty=false;toast('Settings saved.');await refresh();}
+  catch(e){$('settings-error').textContent=e.message;$('settings-error').hidden=false;}
+  finally{$('settings-save').disabled=state?.scanning||false;}
+});
 $('device-form').addEventListener('submit',async e=>{
   e.preventDefault();$('save-button').disabled=true;$('form-error').hidden=true;
   try{await api(`/api/devices/${selectedId}`,'PATCH',{name:$('device-name').value.trim(),description:$('device-description').value.trim(),known:$('device-known').checked});$('device-dialog').close();toast('Device saved.');await refresh();}
@@ -93,7 +109,7 @@ $('device-form').addEventListener('submit',async e=>{
 });
 for(const id of ['dialog-close','dialog-cancel'])$(id).addEventListener('click',()=>$('device-dialog').close());
 for(const id of ['scan-button','history-scan'])$(id).addEventListener('click',scan);
-document.querySelectorAll('[data-page]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.page').forEach(p=>p.hidden=p.id!==`page-${b.dataset.page}`);document.querySelectorAll('[data-page]').forEach(n=>n.classList.toggle('active',n===b));$('page-label').textContent=b.textContent.replace(/\d+$/,'').trim();}));
+document.querySelectorAll('[data-page]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('.page').forEach(p=>p.hidden=p.id!==`page-${b.dataset.page}`);document.querySelectorAll('[data-page]').forEach(n=>n.classList.toggle('active',n===b));$('page-label').textContent=({devices:'Devices',scans:'Scan history',settings:'Settings'})[b.dataset.page];}));
 document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{filter=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(t=>t.classList.toggle('active',t===b));renderDevices();}));
 $('search').addEventListener('input',renderDevices);$('status-filter').addEventListener('change',renderDevices);
 for(const field of ['name','ip'])$('sort-'+field).addEventListener('click',()=>{descending=sort===field?!descending:false;sort=field;renderDevices();});

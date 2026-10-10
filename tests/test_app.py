@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -22,6 +23,7 @@ class StoreTests(unittest.TestCase):
         self.store = Store(str(Path(self.temp.name) / 'lan.sqlite3'))
         with patch.dict(os.environ, {'IFACES':'eth0'}, clear=True):
             self.config = Config()
+        self.config.interfaces = ['eth0']
         self.scanner = Scanner(self.config, self.store)
 
     def tearDown(self):
@@ -123,6 +125,50 @@ class StoreTests(unittest.TestCase):
             db.execute("INSERT INTO scans (started_at,status) VALUES ('2026-01-01','running')")
         self.assertEqual(Store(self.store.path).scan_history()[0]['status'],'error')
 
+class SettingsTests(unittest.TestCase):
+    def test_first_start_waits_for_interface_and_settings_survive_restart(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = Store(str(Path(folder) / 'settings.sqlite3'))
+            config = Config()
+            scanner = Scanner(config, store)
+            self.assertEqual(config.interval, 600)
+            self.assertEqual(config.interfaces, [])
+            scanner.schedule()
+            try:
+                time.sleep(1.2)
+                self.assertEqual(store.scan_history(), [])
+                self.assertIsNone(scanner.next_scan)
+                with self.assertRaisesRegex(ValueError, 'Settings'):
+                    scanner.trigger()
+                settings = dict(interfaces=['br0', 'br0'], interval=900, timeout=30, timezone='UTC')
+                scanner.configure(settings)
+                self.assertIsNotNone(scanner.next_scan)
+            finally:
+                scanner.stop.set()
+            restored = Config()
+            Scanner(restored, Store(store.path))
+            self.assertEqual(restored.settings(), dict(settings, interfaces=['br0']))
+            restored_scanner = Scanner(restored, store)
+            restored_scanner.configure(dict(restored.settings(), interfaces=[]))
+            self.assertIsNone(restored_scanner.next_scan)
+
+    def test_invalid_settings_and_busy_scan_preserve_saved_values(self):
+        with tempfile.TemporaryDirectory() as folder:
+            scanner = Scanner(Config(), Store(str(Path(folder) / 'settings.sqlite3')))
+            original = scanner.config.settings()
+            for changes in [{'interfaces':['eth0;echo']}, {'interfaces':'eth0'}, {'interval':True},
+                            {'interval':9}, {'timeout':601}, {'timezone':'Unknown/Zone'}, {'extra':1}]:
+                with self.assertRaises(ValueError):
+                    scanner.configure(dict(original, **changes))
+            self.assertEqual(scanner.config.settings(), original)
+            self.assertIsNone(scanner.store.load_settings())
+            scanner.lock.acquire()
+            try:
+                self.assertFalse(scanner.configure(dict(original, interval=1200)))
+            finally:
+                scanner.lock.release()
+            self.assertEqual(scanner.config.settings(), original)
+
 class LocalDeviceTests(unittest.TestCase):
     def test_reads_primary_ipv4_and_mac_from_configured_interface(self):
         output = json.dumps([{'address': '02:AA:BB:CC:DD:EE', 'addr_info': [
@@ -148,6 +194,7 @@ class ApiTests(unittest.TestCase):
         self.addCleanup(host_patch.stop)
         self.temp=tempfile.TemporaryDirectory()
         with patch.dict(os.environ,{'IFACES':'eth0'},clear=True):self.config=Config()
+        self.config.interfaces = ['eth0']
         self.store=Store(str(Path(self.temp.name)/'test.sqlite3'))
         with self.store.connect() as db:
             scan_id=db.execute("INSERT INTO scans (started_at,status) VALUES ('2026-01-01','running')").lastrowid
@@ -189,6 +236,21 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.request('/api/devices/1','PATCH',{'known':'yes'})[0],400)
         self.assertEqual(self.request('/api/devices/999','PATCH',{'known':True})[0],404)
         self.assertEqual(self.request('/api/devices/1','PATCH',[])[0],400)
+
+    def test_settings_api_and_unconfigured_start(self):
+        self.scanner.configure(dict(self.config.settings(), interfaces=[]))
+        self.assertEqual(self.request('/')[0], 200)
+        self.assertEqual(self.request('/api/scan', 'POST', {})[0], 400)
+        settings = dict(interfaces=['eth0'], interval=600, timeout=40, timezone='Europe/Berlin')
+        self.assertEqual(self.request('/api/settings', 'PATCH', settings)[0], 200)
+        self.assertEqual(json.loads(self.request('/api/state')[1])['config'], settings)
+        self.assertEqual(self.request('/api/settings', 'PATCH', dict(settings, interval=0))[0], 400)
+        self.assertEqual(self.request('/api/settings', 'PATCH', settings, headers={'Origin':'https://evil.invalid'})[0], 403)
+        self.scanner.lock.acquire()
+        try:
+            self.assertEqual(self.request('/api/settings', 'PATCH', settings)[0], 409)
+        finally:
+            self.scanner.lock.release()
 
     def test_manual_scan(self):
         started, release = threading.Event(), threading.Event()

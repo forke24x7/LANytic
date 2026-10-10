@@ -7,11 +7,7 @@ services:
     environment:
       HOST: ${HOST:-0.0.0.0}
       PORT: ${PORT:-8840}
-      IFACES: ${IFACES:?Set IFACES in .env to your LAN interface}
-      SCAN_INTERVAL: ${SCAN_INTERVAL:-120}
-      SCAN_TIMEOUT: ${SCAN_TIMEOUT:-60}
       DB_PATH: /data/lan.sqlite3
-      TZ: ${TZ:-Europe/Berlin}
     volumes:
       - lanytic-data:/data
     cap_drop:

@@ -9,6 +9,7 @@ Browser → Python HTTP API → SQLite
 Manual trigger or scheduler → bounded `arp-scan` subprocess per interface → validated observations → one SQLite transaction
 
 - Python standard library: no pip, npm, or build step.
+- Configuration: scanner settings are validated and persisted in SQLite; updates share the scan mutex. No interface means no scheduled scan. The default interval is 600 seconds.
 - SQLite/WAL: each request uses its own connection. Scan upserts never overwrite custom metadata.
 - Scan mutex: at most one scan at a time. Scheduling restarts the interval after a run completes.
 - Local host: `ip -j address show dev <interface>` supplies the interface MAC and primary IPv4 address, merged with ARP responses by MAC.
