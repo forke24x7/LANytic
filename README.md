@@ -18,7 +18,7 @@ been hardened for direct exposure to the public internet.
 - Scan history with the latest 100 runs and explicit error details.
 - English interface with Light / Dark / System appearance. Your theme choice is remembered locally; system mode follows OS changes.
 - Responsive layout; no CDNs, trackers, or external fonts.
-- SQLite volume, HTTP Basic authentication, healthcheck, and Docker Compose.
+- SQLite volume, healthcheck, and Docker Compose.
 
 ## Docker Compose on Linux
 
@@ -58,7 +58,7 @@ The name following `dev` is the interface. If the default route uses a VPN or a 
 
 ### Sample `.env`
 
-Save this as `.env` next to `docker-compose.yml`. Replace `enp3s0` with your interface and set your own password before starting:
+Save this as `.env` next to `docker-compose.yml`. Replace `enp3s0` with your interface:
 
 ```dotenv
 IFACES=enp3s0
@@ -67,8 +67,6 @@ HOST=0.0.0.0
 SCAN_INTERVAL=120
 SCAN_TIMEOUT=60
 TZ=Europe/Berlin
-AUTH_USER=admin
-AUTH_PASSWORD='replace-with-a-long-unique-password'
 ```
 
 Multiple interfaces are space-separated, e.g. `IFACES=enp3s0 enp3s0.20`. Host networking lets the container scan these host interfaces directly.
@@ -82,13 +80,13 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-Open `http://SERVER-IP:8840`. Sign in with `admin` (or your configured user) and your password. The first scan starts automatically, then repeats every 120 seconds by default. `.env` and database files are excluded from Git.
+Open `http://SERVER-IP:8840`. The first scan starts automatically, then repeats every 120 seconds by default. `.env` and database files are excluded from Git.
 
 The live setup uses **Linux host networking**, with no `ports:` mapping; `PORT` controls the port on the host. Docker Desktop on macOS/Windows does not provide equivalent ARP access to the physical LAN.
 
 The image runs as root with only `NET_RAW` and `NET_ADMIN` capabilities for `arp-scan`. It does not use `privileged: true`. The root filesystem is read-only; `/data` and `/tmp` are writable. The scanner and its vendor database come from Debian packages.
 
-HTTP Basic authentication over plain HTTP does not encrypt credentials. Use an HTTPS reverse proxy or VPN for access outside your trusted LAN and restrict direct access to the host port. A reverse proxy must preserve the original `Host` header. Set `HOST=127.0.0.1` for a proxy on the same host when appropriate.
+LANytic has no built-in authentication. Run it on your trusted LAN or behind an HTTPS reverse proxy with its own authentication layer (e.g. MFA or OIDC), and restrict direct access to the host port. A reverse proxy must preserve the original `Host` header. Set `HOST=127.0.0.1` for a proxy on the same host when appropriate.
 
 ## Configuration
 
@@ -100,8 +98,6 @@ HTTP Basic authentication over plain HTTP does not encrypt credentials. Use an H
 | `PORT` | `8840` | HTTP port |
 | `HOST` | `127.0.0.1` natively, `0.0.0.0` in Docker | Bind address |
 | `DB_PATH` | `data/lan.sqlite3` natively, `/data/lan.sqlite3` in Docker | SQLite path |
-| `AUTH_USER` | `admin` | HTTP Basic username |
-| `AUTH_PASSWORD` | empty natively, required in live Compose | HTTP Basic password |
 | `TZ` | `Europe/Berlin` in Compose | Container log timezone |
 
 Database/API timestamps use UTC. The English UI formats timestamps in your browser's local timezone. Container configuration changes take effect after `docker compose up -d`.
@@ -133,7 +129,7 @@ For local source changes, build with `docker build -t lanytic:dev .`; the deploy
 python3 -m unittest discover -s tests -v
 ```
 
-Tests cover parsing, IP changes, persistent metadata, failures/timeouts, concurrent scan requests, API validation, authentication, and CSRF protection. GitHub Actions also builds the Docker image, starts the application container, and validates the Compose configuration.
+Tests cover parsing, IP changes, persistent metadata, failures/timeouts, concurrent scan requests, unauthenticated API access, input validation, and CSRF protection. GitHub Actions also builds the Docker image, starts the application container, and validates the Compose configuration.
 
 API: `GET /api/state`, `POST /api/scan` with `{}`, `PATCH /api/devices/<id>` with `known`, `name`, and/or `description`. Writes require `Content-Type: application/json`. `GET /healthz` checks the HTTP service; inspect scan history for scanner health.
 

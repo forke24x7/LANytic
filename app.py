@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 """LANytic: independent LAN inventory; Python standard library only."""
-import base64
-import hmac
 import ipaddress
 import json
 import logging
@@ -35,8 +33,6 @@ class Config:
         if self.interval < 10 or not 1 <= self.timeout <= 600:
             raise ValueError('SCAN_INTERVAL must be >= 10 and SCAN_TIMEOUT between 1 and 600.')
         self.db = os.getenv('DB_PATH', str(ROOT / 'data' / 'lan.sqlite3'))
-        self.username = os.getenv('AUTH_USER', 'admin')
-        self.password = os.getenv('AUTH_PASSWORD', '')
 
 def parse_arp(output, interface):
     devices = {}
@@ -210,22 +206,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def authorized(self):
-        config = self.server.config
-        if not config.password:
-            return True
-        expected = 'Basic ' + base64.b64encode((config.username+':'+config.password).encode()).decode()
-        if hmac.compare_digest(self.headers.get('Authorization','').encode(), expected.encode()):
-            return True
-        self.respond(401, {'error':'Authentication required.'}, extra={'WWW-Authenticate':'Basic realm="LANytic", charset="UTF-8"'})
-        return False
-
     def do_GET(self):
         path = urlsplit(self.path).path
         if path == '/healthz':
             self.respond(200, {'status':'ok'})
-            return
-        if not self.authorized():
             return
         if path == '/api/state':
             scanner = self.server.scanner
@@ -241,8 +225,6 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(404, {'error':'Not found.'})
 
     def mutate(self):
-        if not self.authorized():
-            return
         origin = self.headers.get('Origin')
         if (origin and urlsplit(origin).netloc != self.headers.get('Host')) or self.headers.get('Sec-Fetch-Site') == 'cross-site':
             self.respond(403, {'error':'Cross-site request rejected.'})

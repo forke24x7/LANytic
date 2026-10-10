@@ -1,4 +1,3 @@
-import base64
 import json
 import os
 from pathlib import Path
@@ -107,7 +106,7 @@ class StoreTests(unittest.TestCase):
 class ApiTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
-        with patch.dict(os.environ,{'IFACES':'eth0','AUTH_PASSWORD':'test-only-password'},clear=True):self.config=Config()
+        with patch.dict(os.environ,{'IFACES':'eth0'},clear=True):self.config=Config()
         self.store=Store(str(Path(self.temp.name)/'test.sqlite3'))
         with self.store.connect() as db:
             scan_id=db.execute("INSERT INTO scans (started_at,status) VALUES ('2026-01-01','running')").lastrowid
@@ -116,15 +115,14 @@ class ApiTests(unittest.TestCase):
         self.server=AppServer(('127.0.0.1',0),self.config,self.store,self.scanner)
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
         self.base='http://127.0.0.1:'+str(self.server.server_port)
-        self.auth='Basic '+base64.b64encode(b'admin:test-only-password').decode()
 
     def tearDown(self):
         self.scanner.stop.set()
         if self.scanner.thread:self.scanner.thread.join(3)
         self.server.shutdown();self.server.server_close();self.thread.join(3);self.temp.cleanup()
 
-    def request(self,path,method='GET',body=None,headers=None,auth=True):
-        h={'Authorization':self.auth} if auth else {}
+    def request(self,path,method='GET',body=None,headers=None):
+        h={}
         if body is not None:h['Content-Type']='application/json'
         h.update(headers or {})
         req=Request(self.base+path,method=method,data=json.dumps(body).encode() if body is not None else None,headers=h)
@@ -132,9 +130,9 @@ class ApiTests(unittest.TestCase):
             with urlopen(req,timeout=3) as response:return response.status,response.read(),response.headers
         except HTTPError as response:return response.code,response.read(),response.headers
 
-    def test_auth_health_and_static_allowlist(self):
-        self.assertEqual(self.request('/api/state',auth=False)[0],401)
-        self.assertEqual(self.request('/healthz',auth=False)[0],200)
+    def test_public_api_health_and_static_allowlist(self):
+        self.assertEqual(self.request('/api/state')[0],200)
+        self.assertEqual(self.request('/healthz')[0],200)
         self.assertEqual(self.request('/')[0],200)
         self.assertEqual(self.request('/../app.py')[0],404)
         self.assertEqual(self.request('/app.js')[0],200)

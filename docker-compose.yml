@@ -12,8 +12,6 @@ services:
       SCAN_TIMEOUT: ${SCAN_TIMEOUT:-60}
       DB_PATH: /data/lan.sqlite3
       TZ: ${TZ:-Europe/Berlin}
-      AUTH_USER: ${AUTH_USER:-admin}
-      AUTH_PASSWORD: ${AUTH_PASSWORD:?Set your own AUTH_PASSWORD in .env}
     volumes:
       - lanytic-data:/data
     cap_drop:

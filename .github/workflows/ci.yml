@@ -18,7 +18,6 @@ jobs:
       - name: Build from public Git context
         env:
           IFACES: eth0
-          AUTH_PASSWORD: ci-only-test-password
         run: docker compose -p lanytic-ci build lanytic
       - name: Container smoke test
         run: |
@@ -41,7 +40,6 @@ jobs:
       - name: Compose configuration
         env:
           IFACES: eth0
-          AUTH_PASSWORD: ci-only-test-password
         run: |
           docker compose config --quiet
       - name: Container logs
