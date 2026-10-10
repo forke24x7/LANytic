@@ -1,6 +1,6 @@
 # LANytic
 
-A clean, self-hosted view of your LAN. Discover devices with ARP, mark them as **Known**, and add your own names and descriptions.
+Self-hosted LAN inventory with ARP discovery, **Known** status, custom device names and descriptions, and persistent scanner settings.
 
 ## About this project
 
