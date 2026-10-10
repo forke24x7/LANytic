@@ -1,3 +1,4 @@
+# Keep local configuration, device data, and Python cache files out of Git.
 .env
 .env.*
 !.env.example
