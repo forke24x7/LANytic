@@ -16,7 +16,7 @@ been hardened for direct exposure to the public internet.
 - Known status, custom names, and descriptions that survive IP changes.
 - Search, Known/status filters, sorting, and filtered CSV export.
 - Scan history with the latest 100 runs and explicit error details.
-- English interface with Light / Dark / System appearance, matching Simple SMTP Test. Your theme choice is remembered locally; system mode follows OS changes.
+- English interface with Light / Dark / System appearance. Your theme choice is remembered locally; system mode follows OS changes.
 - Responsive layout; no CDNs, trackers, or external fonts.
 - SQLite volume, HTTP Basic authentication, healthcheck, and Docker Compose.
 

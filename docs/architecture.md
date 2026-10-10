@@ -1,8 +1,6 @@
 # Technical background
 
-WatchYourLAN is written in Go. Its [scanner](https://github.com/aceberg/WatchYourLAN/blob/main/backend/internal/arp/arpscan.go) invokes `arp-scan` per interface and parses IP, MAC, and vendor from its output. The [README](https://github.com/aceberg/WatchYourLAN#readme) documents SQLite/PostgreSQL storage and host networking. Its [Dockerfile](https://github.com/aceberg/WatchYourLAN/blob/main/Dockerfile) installs `arp-scan` and `tzdata`.
-
-LANytic uses the same established scanner utility, with an independent application implementation. No WatchYourLAN application source, UI, assets, or database schema was copied.
+LANytic invokes `arp-scan` per host interface and parses IP addresses, MAC addresses, and vendors from its output. Device information is stored in SQLite. The Docker image includes the scanner and uses host networking to access the LAN.
 
 ## LANytic architecture
 
@@ -18,6 +16,6 @@ Manual trigger or scheduler → bounded `arp-scan` subprocess per interface → 
 - No shell execution: scanner arguments are passed as a list and interface names are validated. API clients cannot submit arbitrary scan commands.
 - Fixed static-file allowlist, escaped user/device data, and a same-origin Content Security Policy.
 - HTTP Basic authentication is mandatory in live Compose. JSON Content-Type and Origin validation protect write requests against CSRF.
-- The UI uses Simple SMTP Test's warm neutral/orange palette and charcoal dark palette. Light / Dark / System preferences are stored locally; a synchronous local theme script prevents an initial theme flash and follows system changes.
+- The UI uses a warm neutral/orange palette and a charcoal dark palette. Light / Dark / System preferences are stored locally; a synchronous local theme script prevents an initial theme flash and follows system changes.
 
 The scope is deliberately focused: discover, list, and identify devices. Unknown means unassigned; it is not an automatic threat assessment.
